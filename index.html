@@ -1260,14 +1260,22 @@ const OFFLINE = { slip: 1, duck: 1, pull: 1, weave: 1, sidestep: 1 };   // defen
 // A fight is three 3-minute rounds. The schedule drives the choreography, not just the clock: the director only books
 // exchanges inside a round, the first fight's Round 1 ends on a scripted knockdown of the blue corner, and between
 // rounds both men walk to their corners. After Round 3 they reset and a rematch starts (without the scripted knockdown).
+// Round 1 of the first fight is split in three: a minute of fighting that ends on the knockdown, the knockdown itself
+// (the round clock keeps running, as it does in a real fight), then the rest of the round. rS/rE are the round's own
+// start and end, so the clock, intensity and fatigue all follow the round rather than the phase.
 const RLEN = 180, BRK = 7, KDLEN = 7, ENDLEN = 10, KO_LEAD = 3.8;
-const KO_T = RLEN;                    // the knockdown punch lands exactly as Round 1's clock hits 0:00
+const KO_T = 60;                      // the knockdown punch lands one minute in, with 2:00 on the clock
 const CORNER_TH = Math.PI * 7 / 8;    // orbit angle that puts red at the red corner pad and blue at the blue one
 const PH = [];
 function buildFight(n, t) {
   for (let r = 1; r <= 3; r++) {
-    PH.push({ type: "fight", r, n, t0: t, t1: t + RLEN }); t += RLEN;
-    if (r === 1 && n === 0) { PH.push({ type: "kd", r, n, t0: t, t1: t + KDLEN }); t += KDLEN; }
+    const rS = t, rE = t + RLEN;
+    if (r === 1 && n === 0) {
+      PH.push({ type: "fight", r, n, rS, rE, t0: t, t1: t + KO_T, ko: true });
+      PH.push({ type: "kd", r, n, rS, rE, t0: t + KO_T, t1: t + KO_T + KDLEN });
+      PH.push({ type: "fight", r, n, rS, rE, t0: t + KO_T + KDLEN, t1: rE, cont: true });
+    } else PH.push({ type: "fight", r, n, rS, rE, t0: t, t1: rE });
+    t = rE;
     if (r < 3) { PH.push({ type: "break", r, n, t0: t, t1: t + BRK }); t += BRK; }
   }
   PH.push({ type: "end", r: 3, n, t0: t, t1: t + ENDLEN });
@@ -1280,13 +1288,17 @@ function phaseAt(t) {
 }
 // How busy the round is (0 = feeling each other out, 1 = all-out): Round 1 builds, Round 2 holds, Round 3 is the hottest.
 function intensity(ph, t) {
-  const p = Math.min(1, Math.max(0, (t - ph.t0) / RLEN));
+  const p = Math.min(1, Math.max(0, (t - ph.rS) / RLEN));
   return ph.r === 1 ? 0.28 + 0.37 * p : ph.r === 2 ? 0.52 + 0.14 * p : 0.74 + 0.2 * p;
 }
 // Fatigue floor: creeps up through each round and across the fight.
-function fatBase(ph, t) { return ph.type === "fight" ? 0.06 * (ph.r - 1) + 0.12 * Math.min(1, (t - ph.t0) / RLEN) : 0; }
-// Round 2 after the knockdown: blue is more careful early on, and it wears off over two minutes.
-function caution(ph, t) { return ph.type === "fight" && ph.r === 2 && ph.n === 0 ? Math.max(0, 1 - (t - ph.t0) / 120) : 0; }
+function fatBase(ph, t) { return ph.type === "fight" ? 0.06 * (ph.r - 1) + 0.12 * Math.min(1, (t - ph.rS) / RLEN) : 0; }
+// After the knockdown blue is careful: a lot for the rest of Round 1, a little early in Round 2.
+function caution(ph, t) {
+  if (ph.type !== "fight" || ph.n !== 0) return 0;
+  if (ph.cont) return Math.max(0, 1 - (t - ph.t0) / 100);
+  return ph.r === 2 ? 0.4 * Math.max(0, 1 - (t - ph.t0) / 60) : 0;
+}
 const sstep = (a, b, x) => ease(Math.min(1, Math.max(0, (x - a) / (b - a))));
 const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -1306,7 +1318,7 @@ function pushSeg(t0, D, thV, cx, cz, o = {}) {
 }
 const book = (t, who, arm, kind, out, sp, pw, extra) => G.ev.push(Object.assign({ t, who, arm, kind, out, sp, pw }, extra));
 
-// The end of Round 1: a real exchange, red finds the opening, and the right hand lands as the clock hits zero.
+// One minute into Round 1: a real exchange, red finds the opening, and the right hand lands with 2:00 on the clock.
 function bookKO(ph) {
   const T1 = ph.t1, st = stateAt(G.t);
   pushSeg(G.t, 1.12, 0.05, st.cx * 0.5, st.cz * 0.5, { e: 0.9 });
@@ -1336,7 +1348,7 @@ function gen(until) {
   while (G.t < until) {
     const t0 = G.t, ph = phaseAt(t0 + 1e-6);
     if (ph.type !== "fight") { bookBreak(ph); continue; }
-    const ko = ph.r === 1 && ph.n === 0, stop = ko ? ph.t1 - KO_LEAD : ph.t1;
+    const ko = !!ph.ko, stop = ko ? ph.t1 - KO_LEAD : ph.t1;
     if (t0 >= stop - 1e-6) { if (ko) bookKO(ph); else G.t = ph.t1; continue; }
     const I = intensity(ph, t0), room = stop - t0, fb = fatBase(ph, t0), cau = caution(ph, t0);
     const opening = ph.t0 > 0 && t0 - ph.t0 < 0.05;   // walking out of the corners
@@ -1573,7 +1585,7 @@ if (glb) new GLTFLoader().parse(glb, "", (gltf) => { try {
 
 // ---------- Motion ----------
 const D2R = Math.PI / 180;
-// Test hook: ?at=175 starts the fight clock 175 s in (just before the end of Round 1).
+// Test hook: ?at=55 starts the fight clock 55 s in (just before the Round 1 knockdown).
 const startAt = (() => { const v = parseFloat(new URLSearchParams(location.search).get("at")); return isFinite(v) && v > 0 ? v : 0; })();
 let ang = arena.target * D2R, vel = 0, activeGlow = 0, lastActive = -1, flash = 0, fightT = startAt, prevT = -1;
 let hitstop = 0, shake = 0, pendingSpark = null, debt = 0;
@@ -1753,12 +1765,12 @@ let eggUntil = -1, lastPh = null, kdCheer = false;
 function updateFighters(dt, t) {
   const T = fightT, ph = phaseAt(T), sK = T - KO_T;
   // Blue's damage: the easter egg hurts him for a while (only during a round); the knockdown leaves him
-  // hurt as he gets up, still shaky through the break, and a little careful early in Round 2.
+  // hurt as he gets up, shaky as the round restarts, and it wears off over the next minute.
   if (arena.allSeen && eggUntil < 0) eggUntil = T + 25;
   let hurtGoal = forceHurt || (T < eggUntil && ph.type === "fight") ? 1 : 0;
   if (sK >= 0 && sK < KDLEN) hurtGoal = sK > 4.6 ? 0.8 : 0;
-  else if (sK >= KDLEN && sK < KDLEN + BRK) hurtGoal = Math.max(hurtGoal, 0.45);
-  else if (sK >= KDLEN + BRK && sK < KDLEN + BRK + 45) hurtGoal = Math.max(hurtGoal, 0.28 * (1 - (sK - KDLEN - BRK) / 45));
+  else if (sK >= KDLEN && sK < KDLEN + 8) hurtGoal = Math.max(hurtGoal, 0.4);
+  else if (sK >= KDLEN + 8 && sK < KDLEN + 8 + 60) hurtGoal = Math.max(hurtGoal, 0.3 * (1 - (sK - KDLEN - 8) / 60));
   G.hurt = hurtGoal === 1;
   fighters[1].hurt += (hurtGoal - fighters[1].hurt) * Math.min(1, dt * (sK >= 0 && sK < KDLEN ? 2 : 0.8));
   fighters.forEach((f, i) => {
@@ -1768,15 +1780,16 @@ function updateFighters(dt, t) {
     if (ph.type === "break" || ph.type === "end") {
       const b = T - ph.t0, len = ph.t1 - ph.t0;
       turn = Math.PI * (sstep(0.2, 1.0, b) - sstep(2.9, 3.9, b));
-      rest = Math.max(sstep(0.6, 1.6, b), i === 0 && ph.r === 1 && ph.n === 0 ? 0.45 : 0) * (1 - sstep(len - 1.6, len - 0.6, b));
+      rest = sstep(0.6, 1.6, b) * (1 - sstep(len - 1.6, len - 0.6, b));
       f.fat = Math.max(0.2, f.fat - dt * 0.05);
-    } else if (ph.type === "kd" && i === 0) rest = 0.45 * sstep(1.0, 2.0, T - ph.t0);   // red waits in a neutral spot, hands half down
+    } else if (ph.type === "kd" && i === 0) rest = 0.45 * sstep(1.0, 2.0, T - ph.t0) * (1 - sstep(5.4, 6.6, T - ph.t0));   // red waits in a neutral spot, hands half down, guard back up before the restart
     f.turn = turn; f.restW = rest;
     if (ph.type === "fight") f.fat = Math.max(f.fat, fatBase(ph, T));
   });
   if (ph !== lastPh && frozenT === null) {
-    if (lastPh && lastPh.type === "fight") { bell(3); crowdHit(0.5); }
-    else if (lastPh && ph.type === "fight") bell(1);
+    // the bell only rings at the ends of rounds, not into or out of the knockdown
+    if (lastPh && (ph.type === "break" || ph.type === "end")) { bell(3); crowdHit(0.5); }
+    else if (lastPh && ph.type === "fight" && !ph.cont) bell(1);
     lastPh = ph;
   }
   if (sK > 5.2 && sK < 5.4 && !kdCheer) { kdCheer = true; crowdHit(0.9); }   // he's up
@@ -2130,9 +2143,10 @@ function updateHUD(T) {
   const ph = phaseAt(T);
   let rd = ph.r, secs = 0, msg = "", tone = "", into = T - ph.t0;
   if (ph.type === "fight") {
-    secs = Math.max(0, Math.ceil(ph.t1 - T - 1e-6));
-    if (into < 2.5) { msg = ph.r === 1 && ph.n > 0 ? "Rematch · Round 1" : "Round " + ph.r + " · Fight"; tone = "gold"; }
+    secs = Math.max(0, Math.ceil(ph.rE - T - 1e-6));
+    if (into < 2.5) { msg = ph.cont ? "Fight" : ph.r === 1 && ph.n > 0 ? "Rematch · Round 1" : "Round " + ph.r + " · Fight"; tone = "gold"; }
   } else if (ph.type === "kd") {
+    secs = Math.max(0, Math.ceil(ph.rE - T - 1e-6));
     msg = into < 4.8 ? "Knockdown · Blue corner" : "Blue is back up";
   } else if (ph.type === "break") {
     if (into < BRK - 2.4) { msg = "Round " + ph.r + " complete"; tone = "steel"; }
