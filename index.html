@@ -71,6 +71,10 @@ button { font: inherit; color: inherit; }
 .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border: 1px solid var(--steel-solid); background: transparent; font-size: 0.8125rem; font-weight: 700; text-decoration: none; cursor: pointer; clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); transition: background .18s, border-color .18s; }
 .btn:hover { border-color: var(--steel-hi); }
 .btn-red { background: var(--red); border-color: var(--red); color: #fff !important; }
+.snd { font: inherit; font-size: 0.75rem; color: var(--steel-hi); background: none; border: 1px solid rgba(255,255,255,.16); padding: 6px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: color .18s, border-color .18s; }
+.snd:hover { color: var(--fg); border-color: rgba(255,255,255,.34); }
+.snd i { width: 7px; height: 7px; background: #3a3b40; display: block; transition: background .2s; }
+.snd[aria-pressed="true"] i { background: var(--red); }
 .btn-red:hover { background: #ff2a31; border-color: #ff2a31; }
 
 /* ---------- Lower-third name card ---------- */
@@ -204,6 +208,7 @@ body.panel-closed .panel-open { display: flex; }
     <a class="hide-sm" href="https://github.com/dakshOnGitHub" target="_blank" rel="noopener">GitHub</a>
     <a class="hide-sm" href="https://www.linkedin.com/in/daksh-kalra-294712444/" target="_blank" rel="noopener">LinkedIn</a>
     <a class="hide-sm hide-md" href="https://leetcode.com/u/DakshOnLeetCode/" target="_blank" rel="noopener">LeetCode</a>
+    <button class="snd hide-sm" id="snd" type="button" aria-pressed="false" title="Crowd sound"><i aria-hidden="true"></i>Sound</button>
     <a class="btn btn-red" href="#contact">Email me</a>
   </nav>
 </header>
@@ -493,7 +498,7 @@ renderer.domElement.addEventListener("webglcontextlost", (e) => { e.preventDefau
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x050506);
-scene.fog = new THREE.Fog(0x050506, 14, 32);
+scene.fog = new THREE.Fog(0x050506, 14, 38);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
 const camera = new THREE.PerspectiveCamera(30, 1.6, 0.1, 80);
@@ -636,6 +641,363 @@ scene.add(new THREE.Points(bokGeo, new THREE.PointsMaterial({ size: 0.5, map: do
 // Impact flash
 const sparkMat = new THREE.SpriteMaterial({ map: dot, color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
 const spark = new THREE.Sprite(sparkMat); spark.scale.setScalar(0.35); scene.add(spark);
+const UP_V = new THREE.Vector3(0, 1, 0), adBoards = [], ribbons = [];
+
+// ---------- Venue: a sold-out arena around the cage ----------
+// Everything here hangs off `ring`, so the stands turn with the octagon. Spectators are one InstancedMesh;
+// their poses (sitting, standing, clapping, cheering, filming) are animated in the vertex shader from a
+// per-sector "hype" level that the fight drives.
+const venue = new THREE.Group(); ring.add(venue);
+const T8 = Math.tan(Math.PI / 8), FLOOR_Y = -1.0;
+const AP0 = 5.9, ROWD = 0.8, RISE = 0.36, NROWS = small ? 14 : 18, BARRIER = 5.35;
+const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const sideXZ = (x, z, th) => [x * Math.cos(th) + z * Math.sin(th), -x * Math.sin(th) + z * Math.cos(th)];
+
+// Spectator geometry, built seated and facing -z, origin on the seat. aPart tags drive the shader:
+// 0 legs, 1 torso, 2 head, 3 left arm, 4 right arm, 5 hair, 6 phone, 7 camera.
+function spectatorGeo(lod) {
+  const parts = [];
+  const box = (w, h, d, x, y, z, part) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); parts.push([g, part]); };
+  box(0.36, 0.14, 0.46, 0, 0.07, -0.2, 0);          // thighs
+  box(0.32, 0.46, 0.14, 0, -0.2, -0.4, 0);          // shins
+  box(0.42, 0.56, 0.24, 0, 0.36, 0.02, 1);          // torso
+  if (lod) box(0.2, 0.24, 0.21, 0, 0.8, 0, 2);
+  else { const hg = new THREE.SphereGeometry(0.11, 8, 6); hg.scale(0.95, 1.15, 1); hg.translate(0, 0.8, 0); parts.push([hg, 2]); }
+  box(0.1, 0.52, 0.11, -0.26, 0.34, 0.0, 3);        // arms hang from shoulders at y 0.6
+  box(0.1, 0.52, 0.11, 0.26, 0.34, 0.0, 4);
+  box(0.2, 0.07, 0.2, 0, 0.93, 0.02, 5);            // hair / cap
+  box(0.07, 0.13, 0.016, 0.26, 0.06, -0.06, 6);     // phone at the right hand
+  box(0.13, 0.1, 0.16, 0, 0.8, -0.17, 7);           // photographer's camera in front of the face
+  parts.forEach((q) => { if (q[0].index) q[0] = q[0].toNonIndexed(); });
+  let n = 0;
+  parts.forEach(([g]) => (n += g.attributes.position.count));
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), tag = new Float32Array(n);
+  let o = 0;
+  parts.forEach(([g, part]) => {
+    const c = g.attributes.position.count;
+    pos.set(g.attributes.position.array, o * 3); nor.set(g.attributes.normal.array, o * 3); tag.fill(part, o, o + c); o += c;
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute("aPart", new THREE.BufferAttribute(tag, 1));
+  return geo;
+}
+
+// Seat everyone: rows of an octagonal bowl, two aisles per side, a few empty seats, ringside staff.
+const SHIRTS = [0x111114, 0x16171b, 0x1d1e23, 0x26272c, 0x2e3038, 0x3a3c44, 0xd8d6cf, 0xb9b6ad, 0x8f1218, 0xb3141c, 0x1b2b55, 0x24365e, 0x4b4f57, 0x6b5a2a, 0xc9a227, 0x5a1f22, 0x2f3d2e];
+const SKINS = [0xf1c9a5, 0xe0ac85, 0xc68e63, 0xa86f48, 0x8a5634, 0x6b3f24, 0x4a2b19];
+const seats = [];   // {x, y, z, th, sector, kind, sc, lit}
+for (let i = 0; i < NROWS; i++) {
+  const ap = AP0 + i * ROWD, y = FLOOR_Y + i * RISE + 0.45, L = 2 * ap * T8;
+  const half = L / 2 - 0.3 - 0.2 * T8 * 2, n = Math.floor((2 * half) / 0.56);
+  for (let k = 0; k < 8; k++) {
+    const th = k * Math.PI / 4;
+    for (let j = 0; j < n; j++) {
+      const x = -half + (j + 0.5) * (2 * half / n);
+      if (Math.abs(Math.abs(x) - L * 0.27) < 0.36) continue;                      // aisles
+      const id = i * 9173 + k * 613 + j;
+      if (hash(id) < (i < 10 ? 0.035 : 0.07)) continue;                          // a few empty seats
+      const r = hash(id + 0.37);
+      const kind = r < 0.32 ? 0 : r < 0.58 ? 1 : r < 0.7 ? 2 : r < 0.84 ? 3 : 4;    // calm, clapper, phone, pointer, stander
+      const [X, Z] = sideXZ(x + (hash(id + 0.9) - 0.5) * 0.06, ap + 0.12, th);
+      seats.push({ x: X, y, z: Z, th: th + (hash(id + 0.5) - 0.5) * 0.25, sector: k, kind, sc: 0.92 + hash(id + 0.21) * 0.16, lit: 1 / (1 + 0.17 * i), id });
+    }
+  }
+}
+// Photographers kneel on the floor between the apron and the barrier; officials sit at cage-side tables.
+const STAFF_AP = 4.72, tables = [];
+for (let k = 0; k < 8; k++) {
+  const th = k * Math.PI / 4 + Math.PI / 8;    // photographers work the corners
+  [-0.35, 0.35].forEach((dx, m) => {
+    const [X, Z] = sideXZ(dx, STAFF_AP - 0.05, th);
+    seats.push({ x: X, y: FLOOR_Y + 0.32, z: Z, th: th + dx * 0.6, sector: k, kind: 5, sc: 1, lit: 1.4, id: 90000 + k * 2 + m, shirt: 0x141417 });
+  });
+}
+[2, 4, 6].forEach((k, m) => {                    // three judges and, on side 4, the timekeeper
+  const th = k * Math.PI / 4;
+  [m === 1 ? [-0.5, 0.5] : [0]].flat().forEach((dx, q) => {
+    const [X, Z] = sideXZ(dx, STAFF_AP + 0.25, th);
+    seats.push({ x: X, y: FLOOR_Y + 0.45, z: Z, th, sector: k, kind: 6, sc: 1, lit: 1.3, id: 91000 + k * 3 + q, shirt: 0x0e0e11 });
+  });
+  tables.push(th);
+});
+
+const crowdU = { uTime: { value: 0 }, uHA: { value: new Float32Array(8) }, uHB: { value: new Float32Array(8) }, uFlash: { value: 0 }, uHouse: { value: 0.035 } };
+const crowdMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+crowdMat.onBeforeCompile = (sh) => {
+  Object.assign(sh.uniforms, crowdU);
+  sh.vertexShader = sh.vertexShader.replace("#include <common>", `#include <common>
+attribute float aPart; attribute vec4 aA; attribute vec4 aShirt; attribute vec3 aSkin;
+uniform float uTime, uFlash; uniform float uHA[8]; uniform float uHB[8];
+varying vec3 vTint; varying float vGlow; varying float vLit;
+vec3 rotX(vec3 p, float a) { float c = cos(a), s = sin(a); return vec3(p.x, p.y * c - p.z * s, p.y * s + p.z * c); }
+vec3 rotZ(vec3 p, float a) { float c = cos(a), s = sin(a); return vec3(p.x * c - p.y * s, p.x * s + p.y * c, p.z); }
+vec3 rotY(vec3 p, float a) { float c = cos(a), s = sin(a); return vec3(p.x * c + p.z * s, p.y, -p.x * s + p.z * c); }
+float h1(float n) { return fract(sin(n * 91.3458) * 47453.5453); }`).replace("#include <begin_vertex>", `#include <begin_vertex>
+{
+  float seed = aA.x, kind = aA.z; int sec = int(aA.y + 0.5);
+  float hA = uHA[sec], hB = uHB[sec];
+  bool official = kind > 4.5;
+  // Calm fans follow the slow level, excitable ones the fast one, each with their own threshold.
+  float h = kind < 0.5 ? 0.75 * hB : official ? 0.25 * hB : mix(hA, hB, 0.25 + 0.5 * fract(seed * 7.31));
+  h += 0.08 * (fract(seed * 13.7) - 0.5);
+  float t = uTime + seed * 40.0;
+  float standLo = kind > 3.5 ? 0.3 : kind < 0.5 ? 0.75 : 0.55;
+  float stand = official ? 0.0 : smoothstep(standLo, standLo + 0.25, h);
+  float cheer = official ? 0.0 : smoothstep(0.6, 0.9, h) * (kind > 2.5 ? 1.0 : 0.75);
+  float clap = (kind > 0.5 && kind < 1.5) || kind > 3.5 && kind < 4.5 ? smoothstep(0.22, 0.45, h) * (1.0 - cheer) : 0.0;
+  float isArm = step(2.5, aPart) * step(aPart, 4.5) + step(5.5, aPart) * step(aPart, 6.5);
+  float sx = aPart > 3.5 ? 1.0 : -1.0;
+  vec3 p = transformed;
+  if (aPart > 6.5 && kind < 4.5 || aPart > 6.5 && kind > 5.5) p = vec3(0.0, 0.6, 0.0);       // camera only on photographers
+  if (aPart > 5.5 && aPart < 6.5 && !(kind > 1.5 && kind < 2.5)) p = vec3(0.0, 0.6, 0.0);  // phone only on phone fans
+  if (aPart > 4.5 && aPart < 5.5 && fract(seed * 3.7) < 0.3) p = vec3(0.0, 0.8, 0.0);     // some have no hair / cap
+  if (isArm > 0.5) {
+    vec3 q = p - vec3(0.26 * sx, 0.6, 0.0);
+    float raise = 0.35, spread = 0.1;                                // resting on the lap
+    raise = mix(raise, 1.25, clap); spread = mix(spread, -0.42 + 0.13 * sin(t * 12.5), clap);
+    if (kind > 2.5 && kind < 3.5 && sx > 0.0) { float pt = smoothstep(0.35, 0.55, h); raise = mix(raise, 1.75, pt); spread = mix(spread, -0.15, pt); }
+    raise = mix(raise, 2.75 + 0.22 * sin(t * 7.0 + sx), cheer); spread = mix(spread, 0.38 + 0.1 * sin(t * 5.0), cheer);
+    if (kind > 1.5 && kind < 2.5 && sx > 0.0) { raise = 1.65; spread = -0.05; }       // filming
+    if (kind > 4.5 && kind < 5.5) { raise = 1.5; spread = -0.5; }                     // photographer holds camera
+    q = rotZ(q, sx * spread); q = rotX(q, raise);
+    p = q + vec3(0.26 * sx, 0.6, 0.0);
+  }
+  if (aPart > 1.5 && aPart < 2.5 || aPart > 4.5 && aPart < 5.5) {        // head looks around a little, less when the fight is hot
+    vec3 q = p - vec3(0.0, 0.72, 0.0);
+    q = rotY(q, (0.35 * sin(t * 0.21) + 0.15 * sin(t * 0.53)) * (1.0 - min(1.0, h * 1.4)));
+    p = q + vec3(0.0, 0.72, 0.0);
+  }
+  if (aPart > 0.5) {                                                      // everything above the hips
+    float bounce = cheer * 0.06 * abs(sin(t * 6.5));
+    p.y += 0.36 * stand + bounce;
+    p.z += 0.14 * stand - 0.07 * h;
+    p.x += 0.02 * sin(t * 0.6);
+  } else if (p.y > -0.02) { p.y += 0.2 * stand; p.z += 0.18 * stand; }    // thighs come up as they stand
+  transformed = p;
+  // Colours: trousers, shirt, skin, hair.
+  float dk = 0.12 + 0.16 * fract(seed * 5.1);
+  vec3 hair = mix(vec3(0.03, 0.025, 0.02), vec3(0.32, 0.22, 0.12), step(0.8, fract(seed * 9.3)));
+  vTint = aPart < 0.5 ? vec3(dk, dk, dk * 1.12) : aPart < 1.5 || aPart > 2.5 && aPart < 4.5 ? aShirt.rgb : aPart < 2.5 ? aSkin : aPart < 5.5 ? hair : vec3(0.05);
+  if (aPart > 2.5 && aPart < 4.5 && fract(seed * 2.3) < 0.35) vTint = aSkin;   // short sleeves
+  vLit = aShirt.a;
+  // Phone screens glow; photographers' flashes and phones pop on big moments.
+  float flash = step(0.82, h1(floor(uTime * 9.0) + seed * 173.0)) * uFlash;
+  vGlow = aPart > 5.5 && aPart < 6.5 ? 0.22 + 3.0 * flash : aPart > 6.5 ? 5.0 * flash * step(0.4, h1(floor(uTime * 9.0) + seed * 31.0)) : 0.0;
+}`)
+  sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
+varying vec3 vTint; varying float vGlow; varying float vLit; uniform float uHouse;`).replace("#include <color_fragment>", `#include <color_fragment>
+  diffuseColor.rgb *= vTint * (0.1 + 0.34 * vLit);`).replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
+  totalEmissiveRadiance += vTint * uHouse * vLit + vec3(0.62, 0.72, 0.9) * vGlow;`);
+};
+const crowdGeo = spectatorGeo(small);
+const NC = seats.length;
+const aA = new Float32Array(NC * 4), aShirt = new Float32Array(NC * 4), aSkin = new Float32Array(NC * 3);
+const crowd = new THREE.InstancedMesh(crowdGeo, crowdMat, NC);
+const mtx = new THREE.Matrix4(), qY = new THREE.Quaternion(), cTmp = new THREE.Color();
+seats.forEach((st, n) => {
+  qY.setFromAxisAngle(UP_V, st.th);
+  mtx.compose(new THREE.Vector3(st.x, st.y, st.z), qY, new THREE.Vector3(st.sc, st.sc, st.sc));
+  crowd.setMatrixAt(n, mtx);
+  aA.set([hash(st.id + 0.71), st.sector, st.kind, st.sc], n * 4);
+  cTmp.setHex(st.shirt ?? SHIRTS[Math.floor(hash(st.id + 0.13) * SHIRTS.length)]).convertSRGBToLinear();
+  aShirt.set([cTmp.r, cTmp.g, cTmp.b, st.lit], n * 4);
+  cTmp.setHex(SKINS[Math.floor(hash(st.id + 0.29) * SKINS.length)]).convertSRGBToLinear();
+  aSkin.set([cTmp.r, cTmp.g, cTmp.b], n * 3);
+});
+crowdGeo.setAttribute("aA", new THREE.InstancedBufferAttribute(aA, 4));
+crowdGeo.setAttribute("aShirt", new THREE.InstancedBufferAttribute(aShirt, 4));
+crowdGeo.setAttribute("aSkin", new THREE.InstancedBufferAttribute(aSkin, 3));
+crowd.frustumCulled = false;
+venue.add(crowd);
+
+// Stepped risers under the rows, the floor-level barrier with LED ad boards, and the judges' tables.
+const riserMat = new THREE.MeshStandardMaterial({ color: 0x060607, roughness: 1 });
+const risers = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), riserMat, NROWS * 8);
+for (let i = 0, n = 0; i < NROWS; i++) {
+  const ap = AP0 + i * ROWD, L = 2 * (ap + ROWD / 2) * T8, top = FLOOR_Y + i * RISE + 0.02;
+  for (let k = 0; k < 8; k++, n++) {
+    const th = k * Math.PI / 4, [X, Z] = sideXZ(0, ap, th), hgt = Math.max(0.02, top - FLOOR_Y);
+    qY.setFromAxisAngle(UP_V, th);
+    mtx.compose(new THREE.Vector3(X, FLOOR_Y + hgt / 2, Z), qY, new THREE.Vector3(L, hgt, ROWD));
+    risers.setMatrixAt(n, mtx);
+  }
+}
+venue.add(risers);
+
+const AD_W = 2048;
+const adTex = canvasTex(AD_W, 64, (g, W, H) => {
+  const ads = [["DK FIGHT NIGHT", "#e5141c"], ["OCTAGON PORTFOLIO", "#f2f0ea"], ["CLASS OF 2030", "#c9a227"], ["RED CORNER", "#e5141c"], ["BUILD  ·  SHIP  ·  REPEAT", "#f2f0ea"], ["BLUE CORNER", "#4f7dff"]];
+  g.fillStyle = "#050506"; g.fillRect(0, 0, W, H);
+  g.font = `800 34px ${MONO}`; g.textBaseline = "middle";
+  const seg = W / ads.length;
+  ads.forEach(([txt, col], i) => {
+    g.fillStyle = i % 2 ? "#0c0c0f" : "#09090b"; g.fillRect(i * seg, 0, seg, H);
+    g.fillStyle = col; g.textAlign = "center"; g.fillText(txt, i * seg + seg / 2, H / 2 + 2);
+    g.fillStyle = "rgba(255,255,255,.08)"; g.fillRect(i * seg, 0, 2, H);
+  });
+});
+adTex.wrapS = THREE.RepeatWrapping;
+const adMat = new THREE.MeshBasicMaterial({ map: adTex, color: 0xb0b0b0 });
+const darkSide = new THREE.MeshStandardMaterial({ color: 0x0a0a0c, roughness: 0.6 });
+for (let k = 0; k < 8; k++) {
+  const th = k * Math.PI / 4, L = 2 * BARRIER * T8;
+  const t = adTex.clone(); t.needsUpdate = true; t.repeat.set(L / 9, 1); t.offset.x = k * 0.37;
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(L, 0.62, 0.06), [darkSide, darkSide, darkSide, darkSide, new THREE.MeshBasicMaterial({ map: t, color: 0xb0b0b0 }), new THREE.MeshBasicMaterial({ map: t, color: 0xb0b0b0 })]);
+  const [X, Z] = sideXZ(0, BARRIER, th);
+  panel.position.set(X, FLOOR_Y + 0.62 / 2 + 0.2, Z); panel.rotation.y = th; venue.add(panel);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(L, 0.2, 0.08), darkSide);
+  base.position.set(X, FLOOR_Y + 0.1, Z); base.rotation.y = th; venue.add(base);
+  adBoards.push(t);
+}
+tables.forEach((th) => {
+  const tb = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.55), new THREE.MeshStandardMaterial({ color: 0x121215, roughness: 0.5 }));
+  const [X, Z] = sideXZ(0, STAFF_AP - 0.22, th);
+  tb.position.set(X, FLOOR_Y + 0.74, Z); tb.rotation.y = th; venue.add(tb);
+  const front = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.7, 0.03), adMat);
+  const [X2, Z2] = sideXZ(0, STAFF_AP - 0.48, th);
+  front.position.set(X2, FLOOR_Y + 0.38, Z2); front.rotation.y = th; venue.add(front);
+});
+
+// Upper arena: a concourse LED ribbon above the last row, wall screens, a centre-hung board and lighting trusses.
+const topAp = AP0 + NROWS * ROWD + 0.3, topY = FLOOR_Y + NROWS * RISE + 1.5;
+for (let k = 0; k < 8; k++) {
+  const th = k * Math.PI / 4, L = 2 * topAp * T8;
+  const t = adTex.clone(); t.needsUpdate = true; t.repeat.set(L / 12, 1); t.offset.x = k * 0.53;
+  const rib = new THREE.Mesh(new THREE.PlaneGeometry(L, 0.55), new THREE.MeshBasicMaterial({ map: t, color: 0x8a8a8a, fog: false }));
+  const [X, Z] = sideXZ(0, topAp, th);
+  rib.position.set(X, topY, Z); rib.rotation.y = th + Math.PI; venue.add(rib);
+  ribbons.push(t);
+}
+const scoreCanvas = document.createElement("canvas"); scoreCanvas.width = 512; scoreCanvas.height = 288;
+const scoreTex = new THREE.CanvasTexture(scoreCanvas); scoreTex.colorSpace = THREE.SRGBColorSpace;
+function drawScore(round, secs, hurt) {
+  const g = scoreCanvas.getContext("2d"), W = 512, H = 288;
+  g.fillStyle = "#050506"; g.fillRect(0, 0, W, H);
+  g.fillStyle = "#e5141c"; g.fillRect(0, 0, W, 46);
+  g.font = `800 24px ${MONO}`; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillStyle = "#fff"; g.fillText("DK FIGHT NIGHT · MAIN EVENT", W / 2, 25);
+  g.font = `800 46px ${MONO}`;
+  g.fillStyle = "#e5141c"; g.fillText("RED", W * 0.27, 120);
+  g.fillStyle = "#7a7a7a"; g.font = `700 26px ${MONO}`; g.fillText("vs", W / 2, 122);
+  g.fillStyle = "#4f7dff"; g.font = `800 46px ${MONO}`; g.fillText("BLUE", W * 0.73, 120);
+  g.fillStyle = "#c9a227"; g.font = `700 22px ${MONO}`; g.fillText("LIGHTWEIGHT · 5 ROUNDS", W / 2, 175);
+  g.fillStyle = "#f2f0ea"; g.font = `800 44px ${MONO}`;
+  g.fillText(`R${round}  ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`, W / 2, 238);
+  if (hurt) { g.fillStyle = "#e5141c"; g.fillRect(W * 0.73 - 60, 150, 120, 6); }
+  scoreTex.needsUpdate = true;
+}
+drawScore(1, 300, false);
+const screenMat = new THREE.MeshBasicMaterial({ map: scoreTex, fog: false, color: 0xcfcfcf });
+const screenBack = new THREE.MeshStandardMaterial({ color: 0x0d0d10, roughness: 0.5 });
+const screenGeo = new THREE.PlaneGeometry(4.6, 2.6);
+[0, 2, 4, 6].forEach((k) => {
+  const th = k * Math.PI / 4 + Math.PI / 8, [X, Z] = sideXZ(0, topAp + 1.2, th);
+  const sc = new THREE.Mesh(screenGeo, screenMat); sc.position.set(X, topY + 3.4, Z); sc.rotation.y = th + Math.PI; venue.add(sc);
+});
+const hung = new THREE.Group(); hung.position.y = 12.6; venue.add(hung);
+for (let k = 0; k < 4; k++) {
+  const f = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.8), screenMat);
+  const g2 = new THREE.Group(); g2.rotation.y = k * Math.PI / 2; f.position.z = 1.62; g2.add(f); hung.add(g2);
+}
+hung.add(new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.9, 3.2), screenBack));
+const trussMat = new THREE.MeshStandardMaterial({ color: 0x1a1b1f, metalness: 0.8, roughness: 0.4 });
+for (let k = 0; k < 4; k++) {
+  const g2 = new THREE.Group(); g2.rotation.y = k * Math.PI / 2 + Math.PI / 4; venue.add(g2);
+  const tr = new THREE.Mesh(new THREE.BoxGeometry(10, 0.35, 0.35), trussMat); tr.position.set(0, 11.2, 5); g2.add(tr);
+  for (let m = -2; m <= 2; m++) {
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.3, 10), trussMat); can.position.set(m * 2.1, 10.9, 5); g2.add(can);
+  }
+}
+// Slow follow-beams sweeping the stands, through the haze.
+const sweepMat = new THREE.MeshBasicMaterial({ map: beamTex, color: 0xffe6c4, transparent: true, opacity: 0.02, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+const sweeps = [];
+for (let k = 0; k < 4; k++) {
+  const pivot = new THREE.Group(); pivot.position.y = 11; venue.add(pivot);
+  const arm = new THREE.Group(); pivot.add(arm);
+  const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 1.6, 11, 24, 1, true), sweepMat);
+  cone.position.y = -5.5; arm.add(cone);
+  arm.rotation.x = 0.85;    // tilt out over the stands
+  sweeps.push({ pivot, base: k * Math.PI / 2 + 0.4, sp: 0.07 + 0.03 * k });
+}
+
+// ---------- Crowd reaction ----------
+const HA = crowdU.uHA.value, HB = crowdU.uHB.value;
+let crowdAct = 0, crowdRoar = 0, lastAllSeen = false, roundClock = -1;
+function crowdHit(s) {
+  if (!loaded) return;
+  const P = fighters[0].root.position, Q = fighters[1].root.position;
+  const mx = (P.x + Q.x) / 2, mz = (P.z + Q.z) / 2, fa = Math.atan2(mx, mz), fr = Math.min(1, Math.hypot(mx, mz) / 2);
+  for (let k = 0; k < 8; k++) {
+    const w = 0.6 + 0.4 * fr * Math.max(0, Math.cos(k * Math.PI / 4 - fa));   // the side the fight is nearest reacts most
+    HA[k] = Math.min(1.25, HA[k] + s * w);
+  }
+  crowdAct = Math.min(1, crowdAct + 0.12 + 0.2 * s);
+  crowdRoar = Math.max(crowdRoar, s);
+  if (s > 0.5) crowdU.uFlash.value = Math.min(1, s);
+}
+function crowdReact(e) {
+  const o = e.out, d = fighters[1 - e.who];
+  let s;
+  if (o === "land") s = (e.kind === "headkick" ? 1.0 : e.kind === "knee" ? 0.7 : e.kind === "bodykick" ? 0.6 : e.kind === "lowkick" ? 0.38 : e.kind === "teep" ? 0.3 : e.pw > 0.7 ? 0.55 : 0.25) * (1 + 0.6 * d.hurt);
+  else if (o === "check" || o === "catch") s = 0.38;
+  else if (o === "block" || o === "kblock" || o === "hblock") s = 0.1;
+  else s = 0.07;
+  crowdHit(s);
+}
+function updateVenue(dt, t) {
+  const hurt = loaded ? fighters[1].hurt : 0;
+  if (arena.allSeen && !lastAllSeen) { lastAllSeen = true; crowdHit(1.3); }
+  crowdAct = Math.max(0, crowdAct - dt * 0.12);
+  const base = 0.1 + 0.18 * crowdAct + 0.22 * hurt + 0.04 * Math.sin(t * 0.13);
+  for (let k = 0; k < 8; k++) {
+    HA[k] += (base + 0.03 * Math.sin(t * 0.4 + k * 1.7) - HA[k]) * Math.min(1, dt * 1.25);
+    HB[k] += (HA[k] - HB[k]) * Math.min(1, dt * 0.8);
+  }
+  crowdU.uTime.value = reduce ? 0 : t;
+  crowdU.uFlash.value = Math.max(0, crowdU.uFlash.value - dt * 1.6);
+  crowdRoar = Math.max(0, crowdRoar - dt * 0.7);
+  if (!reduce) {
+    adBoards.forEach((tx) => (tx.offset.x += dt * 0.018));
+    ribbons.forEach((tx) => (tx.offset.x -= dt * 0.012));
+    sweeps.forEach((b) => (b.pivot.rotation.y = b.base + Math.sin(t * b.sp) * 0.9));
+  }
+  let mean = 0; for (let k = 0; k < 8; k++) mean += HA[k]; mean /= 8;
+  sweepMat.opacity = 0.014 + 0.03 * Math.min(1, mean);
+  crowdU.uHouse.value = 0.035 + 0.03 * Math.min(1, mean);
+  const rc = Math.floor(fightT);   // the board shows a 5-round clock driven by the fight clock
+  if (rc !== roundClock) { roundClock = rc; const into = rc % 1500; drawScore(1 + Math.floor(into / 300), 300 - (into % 300), hurt > 0.5); }
+  crowdAudio(mean, crowdRoar, dt);
+}
+
+// ---------- Optional crowd sound (off until the visitor turns it on) ----------
+let actx = null, aMur = null, aRoar = null, aClap = null, audioOn = false;
+function startAudio() {
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), ch = buf.getChannelData(0);
+  let b = 0; for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; b = 0.985 * b + 0.15 * w; ch[i] = b * 0.6 + w * 0.12; }
+  const src = (rate) => { const s2 = actx.createBufferSource(); s2.buffer = buf; s2.loop = true; s2.playbackRate.value = rate; s2.start(0, Math.random() * 2); return s2; };
+  const master = actx.createGain(); master.gain.value = 0.55; master.connect(actx.destination);
+  const chain = (rate, type, f, q) => { const fl = actx.createBiquadFilter(); fl.type = type; fl.frequency.value = f; fl.Q.value = q; const gn = actx.createGain(); gn.gain.value = 0; src(rate).connect(fl).connect(gn).connect(master); return gn; };
+  aMur = chain(1, "lowpass", 520, 0.5); aRoar = chain(0.9, "bandpass", 850, 0.6); aClap = chain(1.3, "highpass", 2200, 0.7);
+}
+function crowdAudio(mean, roar, dt) {
+  if (!audioOn || !actx) return;
+  const now = actx.currentTime;
+  aMur.gain.setTargetAtTime(0.18 + 0.25 * Math.min(1, mean), now, 0.3);
+  aRoar.gain.setTargetAtTime(0.5 * roar * roar, now, 0.12);
+  const clapAmt = Math.max(0, Math.min(1, mean - 0.2)) * (0.6 + 0.4 * Math.random());
+  aClap.gain.setTargetAtTime(0.05 * clapAmt, now, 0.05);
+}
+const sndBtn = document.getElementById("snd");
+sndBtn.addEventListener("click", () => {
+  audioOn = !audioOn;
+  sndBtn.setAttribute("aria-pressed", String(audioOn));
+  if (audioOn) { if (!actx) startAudio(); actx.resume(); }
+  else if (actx) actx.suspend();
+});
+
 
 // ---------- Camera: fill the screen, keep the ring clear of the content card ----------
 let offX = 0, offY = 0, offXGoal = 0, offYGoal = 0;
@@ -1166,6 +1528,7 @@ function impacts(t0, t1) {
     if (e.out === "catch") { const rel = e.t + 0.62 / e.sp; if (rel > t0 && rel <= t1) fighters[e.who].r.xv -= 1.1; }   // caught leg shoved away
     if (e.kind === "feint" || !(hit > t0 && hit <= t1)) continue;
     const d = fighters[1 - e.who];
+    crowdReact(e);
     if (isKick(e.kind)) { kickImpact(e, d, fighters[e.who]); continue; }
     if (e.out === "land") {
       const im = IMPULSE[e.kind][e.arm], k = (0.5 + 0.5 * e.pw) * (1 + 0.5 * d.hurt);
@@ -1543,6 +1906,7 @@ function tick() {
     fighters[0].root.getWorldPosition(v1); fighters[1].root.getWorldPosition(v2); v3.subVectors(v2, v1).setY(0).normalize(); v1.add(v2).multiplyScalar(0.5); v1.y = 0.95; if (location.search.includes("side")) camera.position.set(v1.x + v3.z * 7, 1.6, v1.z - v3.x * 7);
     camera.clearViewOffset(); camera.fov = +(new URLSearchParams(location.search).get("zoom") || 17); camera.lookAt(v1); camera.updateProjectionMatrix();
   }
+  updateVenue(dt, t);
   renderer.render(scene, camera);
   if (!host.classList.contains("live")) host.classList.add("live");
 }
