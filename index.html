@@ -233,7 +233,7 @@ body.panel-closed .panel-open { display: flex; }
     <a class="hide-sm" href="https://github.com/dakshOnGitHub" target="_blank" rel="noopener">GitHub</a>
     <a class="hide-sm" href="https://www.linkedin.com/in/daksh-kalra-294712444/" target="_blank" rel="noopener">LinkedIn</a>
     <a class="hide-sm hide-md" href="https://leetcode.com/u/DakshOnLeetCode/" target="_blank" rel="noopener">LeetCode</a>
-    <button class="snd hide-sm" id="snd" type="button" aria-pressed="false" title="Crowd sound"><i aria-hidden="true"></i>Sound</button>
+    <button class="snd" id="snd" type="button" aria-pressed="false" title="Arena sound: punches, footwork, crowd and bells"><i aria-hidden="true"></i>Sound</button>
     <a class="btn btn-red" href="#contact">Email me</a>
   </nav>
 </header>
@@ -1007,45 +1007,405 @@ function updateVenue(dt, t) {
   crowdAudio(mean, crowdRoar, dt);
 }
 
-// ---------- Optional crowd sound (off until the visitor turns it on) ----------
-let actx = null, aMur = null, aRoar = null, aClap = null, audioOn = false;
-function startAudio() {
-  actx = new (window.AudioContext || window.webkitAudioContext)();
-  const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), ch = buf.getChannelData(0);
-  let b = 0; for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; b = 0.985 * b + 0.15 * w; ch[i] = b * 0.6 + w * 0.12; }
-  const src = (rate) => { const s2 = actx.createBufferSource(); s2.buffer = buf; s2.loop = true; s2.playbackRate.value = rate; s2.start(0, Math.random() * 2); return s2; };
-  const master = actx.createGain(); master.gain.value = 0.55; master.connect(actx.destination);
-  const chain = (rate, type, f, q) => { const fl = actx.createBiquadFilter(); fl.type = type; fl.frequency.value = f; fl.Q.value = q; const gn = actx.createGain(); gn.gain.value = 0; src(rate).connect(fl).connect(gn).connect(master); return gn; };
-  aMur = chain(1, "lowpass", 520, 0.5); aRoar = chain(0.9, "bandpass", 850, 0.6); aClap = chain(1.3, "highpass", 2200, 0.7);
-}
-function crowdAudio(mean, roar, dt) {
-  if (!audioOn || !actx) return;
-  const now = actx.currentTime;
-  aMur.gain.setTargetAtTime(0.18 + 0.25 * Math.min(1, mean), now, 0.3);
-  aRoar.gain.setTargetAtTime(0.5 * roar * roar, now, 0.12);
-  const clapAmt = Math.max(0, Math.min(1, mean - 0.2)) * (0.6 + 0.4 * Math.random());
-  aClap.gain.setTargetAtTime(0.05 * clapAmt, now, 0.05);
-}
-// Round bell: n strikes of a struck-metal tone (fundamental plus an inharmonic partial).
-function bell(n) {
-  if (!audioOn || !actx) return;
-  for (let i = 0; i < n; i++) {
-    const t0 = actx.currentTime + i * 0.34;
-    [[1180, 0.22], [3260, 0.07]].forEach(([f, a]) => {
-      const o = actx.createOscillator(), g = actx.createGain();
-      o.type = "sine"; o.frequency.value = f;
-      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(a, t0 + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.3);
-      o.connect(g).connect(actx.destination); o.start(t0); o.stop(t0 + 1.4);
-    });
+// ---------- Sound: a procedural arena mix (off until the visitor turns it on) ----------
+// Everything is synthesised with Web Audio once sound is switched on: no files to download, and no two sounds are
+// exactly alike, because every hit, swish, breath and shout is built fresh from noise and oscillators with random
+// pitch, length and level. Sounds are fired by the same fight events that drive the animation (a strike's launch,
+// its contact, the knockdown's keyframes, the round clock) and panned by where on screen they happen.
+// Buses: impacts, movement, fighter voices, crowd ambience, crowd reactions, bells and officials (the ten-second
+// clapper), all feeding one generated arena reverb and a limiter so nothing clips.
+const SND_KEY = "octagon-sound";
+const sfx = (() => {
+  let ctx = null, on = false, wanted = false, master = null, verb = null, voices = 0;
+  const bus = {}, buf = {}, amb = {}, last = {}, P = new THREE.Vector3();
+  const R = (a, b) => a + Math.random() * (b - a);
+  const live = () => on && ctx && ctx.state === "running" && simT === null && !document.hidden;
+  const gate = (k, gap) => { const n = ctx.currentTime; if (last[k] > n - gap) return false; last[k] = n; return true; };
+  const room = (n) => voices < n;   // voice budget: crowd extras drop out before fighter sounds do
+
+  // ---- building blocks ----
+  const gn = (v) => { const g = ctx.createGain(); g.gain.value = v; return g; };
+  const filt = (type, f, q) => { const x = ctx.createBiquadFilter(); x.type = type; x.frequency.value = f; x.Q.value = q; return x; };
+  const out = (b, pan) => { const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, pan || 0)); p.connect(b); return p; };
+  const track = (s) => { voices++; s.onended = () => voices--; };
+  function env(g, t, a, at, dur) {
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, a), t + at);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
   }
-}
-const sndBtn = document.getElementById("snd");
-sndBtn.addEventListener("click", () => {
-  audioOn = !audioOn;
-  sndBtn.setAttribute("aria-pressed", String(audioOn));
-  if (audioOn) { if (!actx) startAudio(); actx.resume(); }
-  else if (actx) actx.suspend();
-});
+  // filtered noise burst: o = { type, f, f2, q, a, at, dur }
+  function noise(dst, t, o) {
+    const s = ctx.createBufferSource(), at = o.at || 0.002;
+    s.buffer = buf.mono; s.playbackRate.value = R(0.9, 1.1);
+    const f = filt(o.type || "bandpass", o.f, o.q || 1);
+    if (o.f2) { f.frequency.setValueAtTime(o.f, t); f.frequency.exponentialRampToValueAtTime(o.f2, t + at + o.dur); }
+    const g = gn(0); env(g, t, o.a, at, o.dur);
+    s.connect(f).connect(g).connect(dst); track(s); s.start(t, Math.random() * 1.5); s.stop(t + at + o.dur + 0.05);
+  }
+  // pitched thump or ping: o = { type, f, f2, a, at, dur }
+  function tone(dst, t, o) {
+    const s = ctx.createOscillator(), at = o.at || 0.003;
+    s.type = o.type || "sine";
+    s.frequency.setValueAtTime(o.f, t); s.frequency.exponentialRampToValueAtTime(o.f2 || o.f, t + at + o.dur);
+    const g = gn(0); env(g, t, o.a, at, o.dur);
+    s.connect(g).connect(dst); track(s); s.start(t); s.stop(t + at + o.dur + 0.05);
+  }
+  // screen position -> stereo pan, so a hit on the left of the cage sounds from the left
+  function panOf(obj) { if (!obj) return 0; obj.getWorldPosition(P).project(camera); return Math.max(-0.85, Math.min(0.85, P.x * 0.75)); }
+
+  // ---- setup (first time sound is switched on) ----
+  function build() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const sr = ctx.sampleRate;
+    const mk = (sec, chs, fill, norm) => {
+      const b = ctx.createBuffer(chs, Math.floor(sr * sec), sr);
+      for (let c = 0; c < chs; c++) {
+        const d = b.getChannelData(c); fill(d, c);
+        if (norm) { let m = 1e-6; for (let i = 0; i < d.length; i++) m = Math.max(m, Math.abs(d[i])); for (let i = 0; i < d.length; i++) d[i] *= norm / m; }
+      }
+      return b;
+    };
+    buf.mono = mk(2, 1, (d) => { for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; });
+    buf.white = mk(3, 2, (d) => { for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; });
+    // brown noise for the distant hall, crossfaded at the loop point so it never clicks
+    buf.brown = mk(6, 2, (d) => {
+      const n = d.length, F = Math.floor(sr * 0.25), x = new Float32Array(n + F); let b = 0;
+      for (let i = 0; i < x.length; i++) { b = 0.985 * b + 0.15 * (Math.random() * 2 - 1); x[i] = b; }
+      for (let i = 0; i < n; i++) d[i] = i < F ? x[i] * (i / F) + x[n + i] * (1 - i / F) : x[i];
+    }, 0.8);
+    // a loop of applause: thousands of individual claps of random size and brightness
+    buf.clap = mk(4, 2, (d) => {
+      const n = d.length;
+      for (let k = 0; k < 4 * 450; k++) {
+        const at = Math.floor(Math.random() * n), L = Math.floor(sr * R(0.004, 0.012)), amp = R(0.15, 1) ** 2, br = R(0.3, 0.9);
+        let y = 0;
+        for (let j = 0; j < L; j++) { const x = Math.random() * 2 - 1; y += br * (x - y); d[(at + j) % n] += (x - y) * amp * Math.exp(-j / (L * 0.25)); }
+      }
+    }, 0.9);
+    // arena reverb: a long, darkening stereo tail, like a big enclosed hall
+    buf.ir = mk(2.8, 2, (d) => {
+      const n = d.length, pre = Math.floor(sr * 0.018); let y = 0;
+      for (let i = pre; i < n; i++) { const p = (i - pre) / (n - pre); y += (0.85 - 0.7 * p) * ((Math.random() * 2 - 1) - y); d[i] = y * Math.pow(1 - p, 2.6); }
+    });
+
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -12; lim.knee.value = 6; lim.ratio.value = 10; lim.attack.value = 0.002; lim.release.value = 0.2;
+    master = gn(0); master.connect(lim).connect(ctx.destination);
+    verb = ctx.createConvolver(); verb.buffer = buf.ir; verb.connect(gn(0.7)).connect(master);
+    const mkBus = (lvl, send) => { const g = gn(lvl); g.connect(master); g.connect(gn(send)).connect(verb); return g; };
+    bus.hit = mkBus(0.9, 0.16); bus.move = mkBus(0.6, 0.06); bus.voice = mkBus(0.55, 0.12);
+    bus.amb = mkBus(0.5, 0.3); bus.react = mkBus(0.5, 0.45); bus.bell = mkBus(0.45, 0.5); bus.call = mkBus(0.4, 0.35);
+
+    // continuous crowd: distant hall rumble, a roar that swells with the action, applause, and mid-distance chatter
+    const loop = (b, rate) => { const s = ctx.createBufferSource(); s.buffer = b; s.loop = true; s.playbackRate.value = rate; s.start(0, Math.random() * b.duration * 0.9); return s; };
+    amb.hall = gn(0); loop(buf.brown, 1).connect(filt("lowpass", 380, 0.4)).connect(amb.hall).connect(bus.amb);
+    amb.roar = gn(0); loop(buf.white, 0.97).connect(filt("bandpass", 720, 0.55)).connect(filt("lowpass", 2600, 0.5)).connect(amb.roar).connect(bus.amb);
+    amb.clap = gn(0); loop(buf.clap, 1).connect(filt("highpass", 700, 0.5)).connect(amb.clap).connect(bus.amb);
+    amb.chat = gn(0); amb.chat.connect(bus.amb);
+    for (let k = 0; k < 10; k++) {   // ten murmuring "talkers" around the room, each with its own syllable rate and pitch drift
+      const f = filt("bandpass", R(380, 1500), R(2, 4)), g = gn(0.5);
+      const lfo = ctx.createOscillator(); lfo.frequency.value = R(2.2, 5.5); lfo.connect(gn(0.5)).connect(g.gain); lfo.start();
+      const drift = ctx.createOscillator(); drift.frequency.value = R(0.07, 0.3); drift.connect(gn(R(150, 350))).connect(f.frequency); drift.start();
+      loop(buf.mono, R(0.9, 1.1)).connect(f).connect(g).connect(out(amb.chat, R(-0.95, 0.95)));
+    }
+  }
+
+  // ---- fighters ----
+  const VOX = [{ f0: 112, f1: 520, f2: 1150 }, { f0: 128, f1: 560, f2: 1250 }];   // red and blue have different voices
+  function grunt(i, t, k, hurt) {
+    const vx = VOX[i], d = out(bus.voice, panOf(fighters[i].rig.head)), dur = hurt ? R(0.12, 0.2) : R(0.1, 0.16);
+    const o = ctx.createOscillator(), f0 = vx.f0 * R(0.92, 1.08) * (hurt ? 0.9 : 1);
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(f0 * (hurt ? 1.15 : 1), t); o.frequency.exponentialRampToValueAtTime(f0 * 0.8, t + dur);
+    const g = gn(0), m = gn(1); env(g, t, 0.16 * k, 0.012, dur);
+    [[vx.f1 * R(0.9, 1.1), 5, 3], [vx.f2 * R(0.9, 1.1), 7, 1.5]].forEach(([f, q, a]) => o.connect(filt("bandpass", f, q)).connect(gn(a)).connect(m));
+    m.connect(filt("lowpass", 1800, 0.5)).connect(g).connect(d);
+    track(o); o.start(t); o.stop(t + dur + 0.05);
+    noise(d, t, { f: 1100, q: 0.7, a: 0.05 * k, at: 0.01, dur: dur * 0.9 });   // breath through the voice
+  }
+  // the man getting hit: mostly silent, sometimes the air goes out of him
+  function hurtVoice(i, e) {
+    const body = e.kind === "body" || e.kind === "bodykick" || e.kind === "knee";
+    const p = e.ko ? 1 : e.kind === "headkick" ? 0.8 : body ? 0.5 : e.pw > 0.8 ? 0.35 : 0.08;
+    if (Math.random() > p || !gate("hv" + i, 0.9)) return;
+    const t = ctx.currentTime + 0.03;
+    if (body) noise(out(bus.voice, panOf(fighters[i].rig.head)), t, { f: R(600, 750), q: 0.8, a: 0.12, at: 0.01, dur: 0.18 });
+    grunt(i, t, body ? 0.6 : e.ko ? 1.1 : 0.8, true);
+  }
+  function glove(d, t, k) {
+    noise(d, t, { f: R(850, 1250), q: 1.8, a: 0.42 * k, dur: 0.045 });
+    tone(d, t, { f: R(210, 250), f2: 120, a: 0.3 * k, dur: 0.05 });
+  }
+  const scuff = (d, t, a) => noise(d, t, { f: R(2200, 3400), q: 0.6, a, at: 0.02, dur: R(0.07, 0.12) });   // bare foot turning on canvas
+
+  // a strike leaves the stance: air, breath and footwork
+  function launch(e) {
+    if (!live() || !room(140)) return;
+    const att = fighters[e.who], def = fighters[1 - e.who], t = ctx.currentTime, pa = panOf(att.rig.chest);
+    if (e.kind === "feint") {   // a twitch of the guard and a foot
+      noise(out(bus.move, pa), t, { f: R(1500, 2200), q: 1, a: 0.025, at: 0.02, dur: 0.08 });
+      if (Math.random() < 0.5) scuff(out(bus.move, pa), t + 0.05, 0.025);
+      return;
+    }
+    const kick = isKick(e.kind), miss = !!OFFLINE[e.out], tp = Math.max(0.12, IMPACT / e.sp - 0.01), pd = panOf(def.rig.head);
+    // swish: louder when nothing stops it, pitch and length from the strike's speed, and hooks sweep across
+    const a = kick ? (miss ? 0.4 : 0.14) : miss ? 0.32 : 0.07, tail = miss ? (kick ? 0.22 : 0.16) : 0.05;
+    const hi = (kick ? 1100 : 1700) * (0.75 + 0.3 * e.sp) * R(0.9, 1.1), lo = hi * 0.3;
+    const p = ctx.createStereoPanner(); p.connect(bus.hit);
+    const curve = e.kind === "hook" || e.kind === "lowkick" || e.kind === "bodykick" || e.kind === "headkick", side = e.arm === "R" ? 1 : -1;
+    p.pan.setValueAtTime(curve ? pa - 0.2 * side : (pa + pd) / 2, t); p.pan.linearRampToValueAtTime(curve ? pd + 0.2 * side : (pa + pd) / 2, t + tp + tail);
+    const s = ctx.createBufferSource(); s.buffer = buf.mono;
+    const f = filt("bandpass", lo, kick ? 0.9 : 1.4), g = gn(0);
+    f.frequency.setValueAtTime(lo, t); f.frequency.exponentialRampToValueAtTime(e.kind === "upper" ? hi * 1.2 : hi, t + tp); f.frequency.exponentialRampToValueAtTime(lo * 1.3, t + tp + tail);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(a * 0.25, t + tp * 0.6); g.gain.exponentialRampToValueAtTime(a, t + tp); g.gain.exponentialRampToValueAtTime(0.0001, t + tp + tail);
+    s.connect(f).connect(g).connect(p); track(s); s.start(t, Math.random()); s.stop(t + tp + tail + 0.05);
+    // breath out through the teeth on most shots, a grunt on some big ones
+    if (Math.random() < 0.75 && gate("ex" + e.who, 0.18)) noise(out(bus.voice, pa), t + tp * 0.4, { f: R(3800, 5200), q: 0.9, a: 0.05 + 0.05 * e.pw, at: 0.008, dur: R(0.06, 0.11) });
+    if (((kick && Math.random() < 0.45) || (e.pw > 0.85 && Math.random() < 0.28)) && gate("gr" + e.who, 1.2)) grunt(e.who, t + tp * 0.7, 1, false);
+    // the pivot on the planted foot
+    if (curve || kick) scuff(out(bus.move, pa), t + 0.02, kick ? 0.05 : 0.035);
+  }
+
+  // contact (or the miss) at the moment the animation reaches the target
+  function strike(e) {
+    crowdOn(e);
+    if (!live() || !gate("st" + e.who + e.arm, 0.03)) return;
+    const def = fighters[1 - e.who], t = ctx.currentTime, o = e.out, k0 = 0.55 + 0.5 * e.pw, v = R(0.85, 1.12);
+    const low = e.kind === "body" || e.kind === "bodykick" || e.kind === "knee" || e.kind === "teep" || e.kind === "lowkick";
+    const d = out(bus.hit, panOf(low ? def.rig.chest : def.rig.head));
+    if (isKick(e.kind)) {
+      const k = k0 * v;
+      if (o === "land") {
+        if (e.kind === "lowkick") { noise(d, t, { f: R(1300, 1800), q: 0.9, a: 0.8 * k, dur: 0.06 }); tone(d, t, { f: R(90, 105), f2: 50, a: 0.8 * k, dur: 0.12 }); }
+        else if (e.kind === "bodykick") { noise(d, t, { f: R(1000, 1300), q: 0.8, a: 0.75 * k, dur: 0.08 }); tone(d, t, { f: R(72, 85), f2: 38, a: 1.05 * k, dur: 0.2 }); }
+        else if (e.kind === "headkick") { noise(d, t, { f: R(1400, 1800), q: 0.8, a: 0.95 * k, dur: 0.07 }); noise(d, t, { type: "highpass", f: 3500, q: 0.7, a: 0.3 * k, dur: 0.016 }); tone(d, t, { f: R(88, 100), f2: 40, a: 1.05 * k, dur: 0.18 }); }
+        else if (e.kind === "teep") { noise(d, t, { type: "lowpass", f: 650, q: 0.7, a: 0.45 * k, dur: 0.1 }); tone(d, t, { f: R(78, 90), f2: 45, a: 0.8 * k, dur: 0.15 }); }
+        else { noise(d, t, { type: "lowpass", f: 850, q: 0.7, a: 0.55 * k, dur: 0.1 }); tone(d, t, { f: R(66, 76), f2: 34, a: 1.0 * k, dur: 0.18 }); }   // knee
+        hurtVoice(1 - e.who, e);
+      } else if (o === "check") {   // shin on shin: a hard, bony knock
+        tone(d, t, { f: R(240, 280), f2: 150, a: 0.6 * k, dur: 0.05 }); noise(d, t, { f: R(850, 1000), q: 3, a: 0.45 * k, dur: 0.04 }); tone(d, t, { f: 75, f2: 45, a: 0.4 * k, dur: 0.08 });
+      } else if (o === "kblock" || o === "hblock") {   // into the arms: muffled
+        noise(d, t, { type: "lowpass", f: R(600, 750), q: 0.8, a: 0.55 * k, dur: 0.08 }); tone(d, t, { f: R(115, 130), f2: 60, a: 0.6 * k, dur: 0.1 }); glove(d, t, 0.4 * k);
+      } else if (o === "catch") { glove(d, t, 0.55 * k); noise(d, t + 0.03, { type: "lowpass", f: 500, a: 0.2 * k, dur: 0.06 }); }
+      return;
+    }
+    if (o === "land" || o === "partial") {
+      const k = k0 * v * (o === "partial" ? 0.5 : 1) * (e.ko ? 1.5 : 1);
+      if (e.kind === "body") { noise(d, t, { type: "lowpass", f: R(800, 1100), q: 0.7, a: 0.5 * k, dur: 0.09 }); tone(d, t, { f: R(80, 95), f2: 40, a: 0.9 * k, dur: 0.17 }); }
+      else if (e.kind === "straight") { noise(d, t, { f: R(1700, 2500), q: 1.1, a: 0.55 * k, dur: 0.05 }); noise(d, t, { type: "highpass", f: 4200, q: 0.7, a: 0.18 * k, dur: 0.012 }); tone(d, t, { f: R(130, 160), f2: 60, a: 0.55 * k, dur: 0.09 }); }
+      else { noise(d, t, { f: R(1050, 1550), q: 0.9, a: 0.6 * k, dur: 0.07 }); noise(d, t, { type: "highpass", f: 3600, q: 0.7, a: 0.15 * k, dur: 0.014 }); tone(d, t, { f: R(100, 120), f2: 45, a: 0.85 * k, dur: 0.14 }); }   // hook, uppercut
+      if (o === "partial") glove(d, t + 0.006, 0.5 * k0);
+      else hurtVoice(1 - e.who, e);
+    } else if (o === "block") glove(d, t, k0 * v);
+    else if (o === "parry") noise(d, t, { f: R(2200, 3000), q: 1.4, a: 0.16 * k0, dur: 0.03 });
+    else if (OFFLINE[o]) {   // the defender's body moving out of the way
+      const w = o === "weave";
+      noise(out(bus.move, panOf(def.rig.head)), t, { f: w ? 320 : 450, f2: w ? 900 : 1100, q: 0.8, a: 0.06, at: w ? 0.16 : 0.08, dur: w ? 0.25 : 0.15 });
+    }
+  }
+
+  // footsteps from how far each man's feet carry him; breathing from how hard he's working
+  const feet = [{ x: null, z: 0, acc: 0 }, { x: null, z: 0, acc: 0 }];
+  const br = [{ next: 0, inh: true }, { next: 0.9, inh: false }];
+  let prevKd = -1, prevRem = 999;
+  function tick(dt, T, ph) {
+    if (!live()) { feet.forEach((s) => (s.x = null)); prevKd = fighters[1].kdS; return; }
+    const now = ctx.currentTime;
+    fighters.forEach((f, i) => {
+      const st = feet[i], p = f.root.position;
+      if (st.x === null || f.kdS >= 0) { st.x = p.x; st.z = p.z; }
+      else {
+        const dd = Math.hypot(p.x - st.x, p.z - st.z); st.x = p.x; st.z = p.z;
+        if (dd < 0.3 && (st.acc += dd) > 0.34 && room(150)) {
+          st.acc = 0;
+          const d = out(bus.move, panOf(f.root)), sp = Math.min(1, dd / Math.max(dt, 1e-3));
+          tone(d, now, { f: R(80, 100), f2: 55, a: 0.07 + 0.05 * sp, dur: 0.05 });
+          noise(d, now, { type: "lowpass", f: R(350, 500), q: 0.6, a: 0.06, dur: 0.05 });
+          if (Math.random() < 0.3) scuff(d, now + 0.02, 0.015);
+        }
+      }
+      const b = br[i];
+      if (now >= b.next && room(150)) {
+        const fight = ph.type === "fight", effort = Math.min(1, Math.max(f.fat * 1.2, fight ? intensity(ph, T) * 0.7 : 0.5, f.hurt * 0.8));
+        const d = out(bus.voice, panOf(f.rig.head)), a = 0.025 + 0.06 * effort, dur = (b.inh ? 0.5 : 0.38) * (1.1 - 0.4 * effort);
+        noise(d, now, b.inh ? { f: R(1500, 1900), q: 0.8, a: a * 0.6, at: dur * 0.5, dur: dur * 0.6 } : { f: R(800, 1100), q: 0.9, a, at: 0.04, dur });
+        b.inh = !b.inh; b.next = now + dur + (b.inh ? R(0.35, 0.6) : R(0.15, 0.3)) * (2 - 1.1 * effort);
+      }
+    });
+    // the knockdown: he sits down hard, then his back hits the canvas; the lead foot plants as he gets up
+    const s = fighters[1].kdS;
+    if (prevKd < 1.32 && s >= 1.32) fall(0.7);
+    if (prevKd < 1.62 && s >= 1.62) fall(1);
+    if (prevKd < 4.35 && s >= 4.35) fall(0.25);
+    prevKd = s;
+    if (ph.type === "kd") exFloor = Math.max(exFloor, 0.6);
+    // ten seconds left: the timekeeper bangs the clapper
+    const rem = ph.rE !== undefined ? ph.rE - T : 999;
+    if (prevRem > 10 && rem <= 10 && rem > 9) clapper();
+    prevRem = rem;
+  }
+  function fall(k) {
+    const t = ctx.currentTime, d = out(bus.hit, panOf(fighters[1].rig.hips));
+    tone(d, t, { f: R(60, 70), f2: 32, a: 0.9 * k, dur: 0.26 });
+    noise(d, t, { type: "lowpass", f: 320, q: 0.5, a: 0.55 * k, dur: 0.22 });
+    noise(d, t + 0.03, { f: 1200, q: 1, a: 0.12 * k, dur: 0.05 });   // gloves slapping the mat
+  }
+  function clapper() {
+    const d = out(bus.call, 0.35);
+    for (let i = 0; i < 3; i++) {
+      const t = ctx.currentTime + i * 0.17 + R(0, 0.02);
+      noise(d, t, { f: R(2100, 2400), q: 4, a: 0.5, dur: 0.03 }); tone(d, t, { f: R(1050, 1150), f2: 1000, a: 0.2, dur: 0.04 });
+    }
+  }
+  // round bell: a struck-metal tone, a fundamental and inharmonic partials that die away at different rates
+  function bell(n) {
+    if (!live()) return;
+    const d = out(bus.bell, 0.25);
+    for (let i = 0; i < n; i++) {
+      const t = ctx.currentTime + i * 0.34;
+      [[1, 1, 2.4], [2.32, 0.45, 1.6], [4.25, 0.25, 0.9], [6.63, 0.12, 0.5]].forEach(([r, a, dur]) => tone(d, t, { f: 1050 * r, a: 0.3 * a, at: 0.004, dur }));
+      noise(d, t, { type: "highpass", f: 3000, a: 0.15, dur: 0.01 });
+    }
+  }
+
+  // ---- crowd ----
+  const VOW = { ah: [750, 1200], oo: [380, 850], ey: [550, 1800], oh: [520, 950] };
+  function crowdVoice(t, vow, f0, dur, a, pan, near) {
+    if (!room(170)) return;
+    const [F1, F2] = VOW[vow], d = out(bus.react, pan), o = ctx.createOscillator(), m = gn(1), g = gn(0);
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f0 * R(1.08, 1.3), t + dur * 0.35); o.frequency.linearRampToValueAtTime(f0 * R(0.8, 0.95), t + dur);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(a, t + Math.min(0.08, dur * 0.2)); g.gain.setValueAtTime(a, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    [[F1, 6, 2.5], [F2, 8, 1.4]].forEach(([f, q, aa]) => o.connect(filt("bandpass", f * R(0.9, 1.12), q)).connect(gn(aa)).connect(m));
+    m.connect(filt("lowpass", near ? 3200 : 1600, 0.5)).connect(g).connect(d);
+    track(o); o.start(t); o.stop(t + dur + 0.05);
+    noise(d, t, { f: F2, q: 1.5, a: a * 0.6, at: 0.05, dur });
+  }
+  const f0Crowd = () => (Math.random() < 0.7 ? R(110, 180) : R(200, 300));
+  // one spectator: a "hey!", a "woo", a long "yeah"; a few are right at the cage and much louder
+  function shout(t, k = 1) {
+    const near = Math.random() < 0.25, pan = R(-0.95, 0.95), a = (near ? 0.09 : 0.03) * k, r = Math.random();
+    if (r < 0.4) crowdVoice(t, "ey", f0Crowd(), R(0.25, 0.4), a, pan, near);
+    else if (r < 0.7) crowdVoice(t, "oo", f0Crowd() * 1.3, R(0.6, 0.9), a, pan, near);
+    else crowdVoice(t, "ah", f0Crowd(), R(0.5, 1.1), a, pan, near);
+  }
+  function whistle(t) {
+    if (!room(170)) return;
+    const d = out(bus.react, R(-0.9, 0.9)), o = ctx.createOscillator(), g = gn(0), f = R(2000, 2800), dur = R(0.4, 0.8);
+    o.frequency.setValueAtTime(f, t); o.frequency.linearRampToValueAtTime(f * 1.25, t + dur * 0.35); o.frequency.linearRampToValueAtTime(f * 0.85, t + dur);
+    env(g, t, R(0.015, 0.04), 0.03, dur); o.connect(g).connect(d); track(o); o.start(t); o.stop(t + dur + 0.1);
+  }
+  function cheer(k, delay) {   // a burst: a wall of voices on top of the roar swelling up
+    const t = ctx.currentTime + delay, n = Math.round(8 + 14 * k);
+    for (let i = 0; i < n; i++) shout(t + R(0, 0.5) * (i / n + 0.3), 0.8 + 0.4 * k);
+    if (k > 0.7) for (let i = 0; i < 1 + (k > 1 ? 2 : 0); i++) whistle(t + R(0.2, 1.2));
+    ex = Math.min(1, ex + 0.4 * k);
+  }
+  function gasp(k) {   // "ooh": the crowd sucks in at a big shot or a near miss
+    const t = ctx.currentTime + 0.05, n = Math.round(6 + 10 * k);
+    for (let i = 0; i < n; i++) crowdVoice(t + R(0, 0.25), "oo", f0Crowd() * 1.15, R(0.5, 0.9), 0.05 * k, R(-0.95, 0.95), Math.random() < 0.2);
+    ex = Math.min(1, ex + 0.3 * k);
+  }
+  // excitement drives the roar; bursts are probabilistic, so the same punch never gets the same reaction twice
+  let ex = 0, exFloor = 0, clapA = 0, lastBurst = -9;
+  const combo = [{ n: 0, t: -9 }, { n: 0, t: -9 }];
+  function crowdOn(e) {
+    if (!live()) return;
+    const now = ctx.currentTime, o = e.out, d = fighters[1 - e.who];
+    if (o === "land") {
+      const c = combo[e.who]; c.n = now - c.t < 1.8 ? c.n + 1 : 1; c.t = now;
+      const big = e.kind === "headkick" ? 1 : e.kind === "bodykick" || e.kind === "knee" ? 0.6 : e.kind === "lowkick" ? 0.35 : e.kind === "teep" ? 0.25 : 0.2 + 0.4 * e.pw;
+      const s = big * (1 + 0.6 * d.hurt);
+      ex = Math.min(1, ex + 0.1 + 0.35 * s);
+      if (e.ko) return;   // the knockdown has its own sequence
+      if (s > 0.8 && now - lastBurst > 2) { gasp(0.8); cheer(0.9, 0.12); lastBurst = now; }
+      else if (c.n >= 3 && now - lastBurst > 3) { cheer(0.6 + 0.1 * c.n, 0); clapA = Math.min(1, clapA + 0.5); lastBurst = now; }
+      else if (Math.random() < 0.15 + 0.5 * s) { const n = 1 + Math.floor(s * 4); for (let i = 0; i < n; i++) shout(now + R(0.05, 0.4)); }
+    } else if (o === "check" || o === "catch") { ex = Math.min(1, ex + 0.15); if (Math.random() < 0.45) gasp(0.4); }
+    else if (OFFLINE[o]) { ex = Math.min(1, ex + 0.04); if (e.pw > 0.75 && Math.random() < 0.18 && now - lastBurst > 4) { gasp(0.45); lastBurst = now; } }
+    else ex = Math.min(1, ex + (o === "partial" ? 0.06 : 0.02));
+  }
+  function crowdTick(mean, roar, dt) {
+    if (!live()) return;
+    const now = ctx.currentTime, ph = phaseAt(fightT), brk = ph.type === "break" || ph.type === "end", m = Math.min(1, mean);
+    const prev = ex;
+    ex = Math.max(exFloor, Math.max(0, ex - dt * (ex > 0.6 ? 0.18 : 0.1)), 0.7 * roar);
+    exFloor = Math.max(0, exFloor - dt * 0.05); clapA = Math.max(0, clapA - dt * 0.22);
+    amb.hall.gain.setTargetAtTime(0.32 + 0.12 * m, now, 0.5);
+    amb.chat.gain.setTargetAtTime((brk ? 0.2 : 0.14) * (1 - 0.6 * ex), now, 0.4);
+    amb.roar.gain.setTargetAtTime((0.04 + 0.12 * m + 0.6 * ex * ex) * (brk ? 0.7 : 1), now, ex > prev ? 0.08 : 0.5);
+    amb.clap.gain.setTargetAtTime(0.03 + 0.45 * clapA, now, 0.12);
+    if (Math.random() < dt * (brk ? 0.25 : 0.35 + 2.2 * ex)) shout(now + R(0, 0.1));
+    if (Math.random() < dt * (0.03 + 0.25 * ex)) whistle(now + R(0, 0.2));
+  }
+
+  // ---- scripted moments ----
+  function ko() { if (!live()) return; ex = 1; exFloor = 0.85; gasp(1.2); cheer(1.3, 0.2); clapA = 0.5; }
+  function getUp() { if (!live()) return; cheer(1.1, 0); clapA = 1; ex = 1; }
+  function roundStart() { if (!live()) return; cheer(0.5, 0.1); clapA = Math.min(1, clapA + 0.3); }
+  function roundEnd() { if (!live()) return; cheer(0.5, 0.3); clapA = 0.8; }
+
+  // ---- switch, remembered for this browser session ----
+  const btn = document.getElementById("snd");
+  function setOn(v) {
+    on = v; wanted = v;
+    try { sessionStorage.setItem(SND_KEY, v ? "1" : "0"); } catch (err) { /* storage blocked: just don't remember */ }
+    btn.setAttribute("aria-pressed", String(v));
+    if (v) {
+      if (!ctx) build();
+      ctx.resume();
+      const n = ctx.currentTime; master.gain.cancelScheduledValues(n); master.gain.setValueAtTime(master.gain.value, n); master.gain.linearRampToValueAtTime(0.9, n + 1.2);
+    } else if (ctx) {
+      const n = ctx.currentTime; master.gain.cancelScheduledValues(n); master.gain.setValueAtTime(master.gain.value, n); master.gain.linearRampToValueAtTime(0, n + 0.3);
+      setTimeout(() => { if (!on && ctx) ctx.suspend(); }, 400);
+    }
+  }
+  btn.addEventListener("click", () => setOn(!(on || wanted)));
+  // sound was on earlier in this session: show it as on, and start it on the first click or key press
+  // (browsers don't allow audio before the visitor interacts with the page)
+  try { wanted = sessionStorage.getItem(SND_KEY) === "1"; } catch (err) { wanted = false; }
+  if (wanted) btn.setAttribute("aria-pressed", "true");
+  const firstTouch = (ev) => { if (wanted && (!on || ctx.state !== "running") && !btn.contains(ev.target)) setOn(true); };
+  ["pointerdown", "keydown"].forEach((k) => addEventListener(k, firstTouch, true));
+  document.addEventListener("visibilitychange", () => { if (!ctx) return; if (document.hidden) ctx.suspend(); else if (on) ctx.resume(); });
+
+  // test hook: ?sound switches sound on at load (only audible where the browser allows audio without a click)
+  // and window.__sfx.stats() reports the live voice count and output level
+  if (/[?&]sound\b/.test(location.search)) setOn(true);
+  let meter = null;
+  const stats = () => {
+    if (!ctx) return null;
+    if (!meter) { meter = ctx.createAnalyser(); meter.fftSize = 2048; master.connect(meter); }
+    const d = new Float32Array(meter.fftSize); meter.getFloatTimeDomainData(d); let pk = 0; for (const x of d) pk = Math.max(pk, Math.abs(x));
+    return { state: ctx.state, voices, ex: +ex.toFixed(2), peak: +pk.toFixed(3) };
+  };
+  // test hook: __sfx.demo() runs every strike and outcome, the knockdown sequence, bells and the clapper through the engine
+  const demo = () => {
+    const kinds = ["straight", "hook", "upper", "body", "lowkick", "bodykick", "headkick", "teep", "knee"];
+    const outs = ["land", "partial", "block", "parry", "slip", "weave", "sidestep", "check", "kblock", "hblock", "catch", "feint"];
+    let k = 0;
+    kinds.forEach((kind) => outs.forEach((o) => {
+      const e = { who: k % 2, arm: k % 3 ? "L" : "R", kind: o === "feint" ? "feint" : kind, out: o, sp: 1, pw: 0.5 + 0.5 * Math.random() };
+      setTimeout(() => { launch(e); setTimeout(() => strike(e), 300); }, 120 * k++);
+    }));
+    setTimeout(() => { const e = { who: 0, arm: "R", kind: "straight", out: "land", sp: 1, pw: 1, ko: true }; strike(e); ko(); setTimeout(() => fall(0.7), 1300); setTimeout(() => fall(1), 1600); setTimeout(getUp, 5200); }, 120 * k + 300);
+    setTimeout(() => { bell(3); roundEnd(); clapper(); }, 120 * k + 7000);
+    return 120 * k + 9000;
+  };
+  window.__sfx = { stats, demo };
+  if (/[?&]meter\b/.test(location.search)) {   // test hook: ?sound&meter prints the loudest moment and busiest voice count
+    let top = { peak: 0, voices: 0 }, el = null;
+    setInterval(() => {
+      const s = stats(); if (!s) return;
+      top = { peak: Math.max(top.peak, s.peak), voices: Math.max(top.voices, s.voices), state: s.state, ex: s.ex };
+      if (!el) { el = document.createElement("pre"); el.id = "sndOut"; el.style.cssText = "position:fixed;z-index:9;left:8px;top:120px;background:#000;color:#0f0;margin:0;padding:6px"; document.body.appendChild(el); }
+      el.textContent = "sound " + JSON.stringify(top) + " now " + JSON.stringify(s);
+    }, 50);
+  }
+  return { launch, strike, tick, crowdTick, bell, ko, getUp, roundStart, roundEnd };
+})();
+function crowdAudio(mean, roar, dt) { sfx.crowdTick(mean, roar, dt); }
+function bell(n) { sfx.bell(n); }
 
 
 // ---------- Camera: fill the screen, keep the ring clear of the content card ----------
@@ -1681,11 +2041,12 @@ function kickImpact(e, d, k) {
 function impacts(t0, t1) {
   for (const e of G.ev) {
     if (e.kind !== "feint" && e.t > t0 && e.t <= t1) fighters[e.who].fat += 0.03;
+    if (e.t > t0 && e.t <= t1) sfx.launch(e);
     const hit = e.t + IMPACT / e.sp;
     if (e.out === "catch") { const rel = e.t + 0.62 / e.sp; if (rel > t0 && rel <= t1) fighters[e.who].r.xv -= 1.1; }   // caught leg shoved away
     if (e.kind === "feint" || !(hit > t0 && hit <= t1)) continue;
     const d = fighters[1 - e.who];
-    crowdReact(e);
+    crowdReact(e); sfx.strike(e);
     if (isKick(e.kind)) { if (e.out === "land") debug.stats.land[e.who]++; kickImpact(e, d, fighters[e.who]); continue; }
     if (OFFLINE[e.out] || e.out === "block" || e.out === "parry") debug.stats.def[1 - e.who]++;
     if (e.out === "land" || e.out === "partial") {
@@ -1699,7 +2060,7 @@ function impacts(t0, t1) {
       if (e.ko) {
         // the knockdown shot: head snaps back and round, weight goes onto the heels
         d.r.pv -= 10; d.r.yv -= 5; d.r.xv -= 1.4;
-        hitstop = 0.16; shake = 1.7; crowdHit(1.4);
+        hitstop = 0.16; shake = 1.7; crowdHit(1.4); sfx.ko();
       } else if (heavy && e.pw > 0.85 && e.kind !== "body" && Math.random() < 0.28) {
         // a clean, heavy shot can buckle the legs for a moment; he gives ground and finds his feet
         d.r.kdv += 1.1; d.r.lv += (Math.random() < 0.5 ? -1 : 1) * 0.7; d.r.xv -= 0.9; debug.stats.stagger[1 - e.who]++;
@@ -1788,11 +2149,12 @@ function updateFighters(dt, t) {
   });
   if (ph !== lastPh && frozenT === null) {
     // the bell only rings at the ends of rounds, not into or out of the knockdown
-    if (lastPh && (ph.type === "break" || ph.type === "end")) { bell(3); crowdHit(0.5); }
-    else if (lastPh && ph.type === "fight" && !ph.cont) bell(1);
+    if (lastPh && (ph.type === "break" || ph.type === "end")) { bell(3); crowdHit(0.5); sfx.roundEnd(); }
+    else if (lastPh && ph.type === "fight" && !ph.cont) { bell(1); sfx.roundStart(); }
     lastPh = ph;
   }
-  if (sK > 5.2 && sK < 5.4 && !kdCheer) { kdCheer = true; crowdHit(0.9); }   // he's up
+  if (sK > 5.2 && sK < 5.4 && !kdCheer) { kdCheer = true; crowdHit(0.9); sfx.getUp(); }   // he's up
+  sfx.tick(dt, T, ph);
   gen(T + (frozenT !== null ? 45 : 6));
   if (frozenT === null && prevT >= 0 && T > prevT) impacts(prevT, T);
   prevT = T;
