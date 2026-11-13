@@ -194,6 +194,31 @@ body.panel-closed .panel-open { display: flex; }
 .toast b { color: #6f9bff; font-weight: 700; }
 .toast i { width: 8px; height: 8px; background: var(--red); display: block; }
 @media (min-width: 900px) { body:not(.panel-closed) .toast { left: calc((100vw - 410px) / 2); } }
+/* ---------- Fight HUD: round, clock, corners ---------- */
+.hud { position: fixed; z-index: 3; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%; transform: translateX(-50%); display: grid; justify-items: center; gap: 6px; pointer-events: none; }
+.hud-bar { display: grid; grid-template-columns: 1fr auto 1fr; background: rgba(8, 8, 10, .88); border: 1px solid var(--steel);
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%, 0 10px); }
+.hud-f { display: flex; align-items: center; gap: 9px; padding: 0 14px; min-width: 96px; font-size: .6875rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: #fff; }
+.hud-f i { width: 6px; height: 22px; display: block; flex: none; }
+.hud-f.red i { background: var(--red); }
+.hud-f.blue { justify-content: flex-end; }
+.hud-f.blue i { background: #2f6bff; }
+.hud-mid { display: grid; justify-items: center; padding: 5px 18px 6px; border-inline: 1px solid var(--steel); background: rgba(0, 0, 0, .55); }
+.hud-rd { font-size: .5625rem; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--gold); }
+.hud-clock { font-size: 1.375rem; font-weight: 800; line-height: 1.15; font-variant-numeric: tabular-nums; color: #fff; }
+.hud-clock.low { color: var(--red); }
+.hud-pips { display: flex; gap: 4px; margin-top: 2px; }
+.hud-pips b { width: 16px; height: 3px; background: #3a3b40; display: block; }
+.hud-pips b.done { background: #f2f0ea; }
+.hud-pips b.cur { background: var(--gold); }
+.hud-msg { font-size: .6875rem; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; padding: 5px 12px; background: var(--red); color: #fff;
+  opacity: 0; transform: translateY(-4px); transition: opacity .35s, transform .45s var(--ease); white-space: nowrap; }
+.hud-msg.show { opacity: 1; transform: none; }
+.hud-msg.gold { background: var(--gold); color: #111; }
+.hud-msg.steel { background: #f2f0ea; color: #111; }
+@media (max-width: 1279px) { .hud { top: calc(env(safe-area-inset-top, 0px) + 72px); } .toast { top: 150px; } }
+@media (min-width: 900px) { body:not(.panel-closed) .hud { left: calc((100vw - 410px) / 2); } }
+@media (max-width: 520px) { .hud-f { min-width: 0; padding: 0 10px; letter-spacing: .1em; } .hud-mid { padding-inline: 12px; } .hud-clock { font-size: 1.125rem; } }
 @media (prefers-reduced-motion: reduce) { .panel, .panel-body, .ring canvas { transition: none !important; } }
 </style>
 
@@ -222,6 +247,18 @@ body.panel-closed .panel-open { display: flex; }
   </div>
 </div>
 
+<div class="hud" id="hud" aria-hidden="true">
+  <div class="hud-bar">
+    <span class="hud-f red"><i></i>Red</span>
+    <span class="hud-mid">
+      <span class="hud-rd" id="hudRd">Round 1 / 3</span>
+      <span class="hud-clock" id="hudClock">3:00</span>
+      <span class="hud-pips" id="hudPips"><b class="cur"></b><b></b><b></b></span>
+    </span>
+    <span class="hud-f blue">Blue<i></i></span>
+  </div>
+  <div class="hud-msg" id="hudMsg"></div>
+</div>
 <div class="toast glass label" id="toast" role="status" aria-live="polite"></div>
 <div class="hint label" aria-hidden="true">
   <svg width="22" height="14" viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M5 2 1 7l4 5M17 2l4 5-4 5M1 7h20"/></svg>
@@ -882,13 +919,13 @@ function drawScore(round, secs, hurt) {
   g.fillStyle = "#e5141c"; g.fillText("RED", W * 0.27, 120);
   g.fillStyle = "#7a7a7a"; g.font = `700 26px ${MONO}`; g.fillText("vs", W / 2, 122);
   g.fillStyle = "#4f7dff"; g.font = `800 46px ${MONO}`; g.fillText("BLUE", W * 0.73, 120);
-  g.fillStyle = "#c9a227"; g.font = `700 22px ${MONO}`; g.fillText("LIGHTWEIGHT · 5 ROUNDS", W / 2, 175);
+  g.fillStyle = "#c9a227"; g.font = `700 22px ${MONO}`; g.fillText("LIGHTWEIGHT · 3 ROUNDS", W / 2, 175);
   g.fillStyle = "#f2f0ea"; g.font = `800 44px ${MONO}`;
   g.fillText(`R${round}  ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`, W / 2, 238);
   if (hurt) { g.fillStyle = "#e5141c"; g.fillRect(W * 0.73 - 60, 150, 120, 6); }
   scoreTex.needsUpdate = true;
 }
-drawScore(1, 300, false);
+drawScore(1, 180, false);
 const screenMat = new THREE.MeshBasicMaterial({ map: scoreTex, fog: false, color: 0xcfcfcf });
 const screenBack = new THREE.MeshStandardMaterial({ color: 0x0d0d10, roughness: 0.5 });
 const screenGeo = new THREE.PlaneGeometry(4.6, 2.6);
@@ -942,6 +979,7 @@ function crowdReact(e) {
   let s;
   if (o === "land") s = (e.kind === "headkick" ? 1.0 : e.kind === "knee" ? 0.7 : e.kind === "bodykick" ? 0.6 : e.kind === "lowkick" ? 0.38 : e.kind === "teep" ? 0.3 : e.pw > 0.7 ? 0.55 : 0.25) * (1 + 0.6 * d.hurt);
   else if (o === "check" || o === "catch") s = 0.38;
+  else if (o === "partial") s = 0.2;
   else if (o === "block" || o === "kblock" || o === "hblock") s = 0.1;
   else s = 0.07;
   crowdHit(s);
@@ -966,8 +1004,6 @@ function updateVenue(dt, t) {
   let mean = 0; for (let k = 0; k < 8; k++) mean += HA[k]; mean /= 8;
   sweepMat.opacity = 0.014 + 0.03 * Math.min(1, mean);
   crowdU.uHouse.value = 0.035 + 0.03 * Math.min(1, mean);
-  const rc = Math.floor(fightT);   // the board shows a 5-round clock driven by the fight clock
-  if (rc !== roundClock) { roundClock = rc; const into = rc % 1500; drawScore(1 + Math.floor(into / 300), 300 - (into % 300), hurt > 0.5); }
   crowdAudio(mean, crowdRoar, dt);
 }
 
@@ -989,6 +1025,19 @@ function crowdAudio(mean, roar, dt) {
   aRoar.gain.setTargetAtTime(0.5 * roar * roar, now, 0.12);
   const clapAmt = Math.max(0, Math.min(1, mean - 0.2)) * (0.6 + 0.4 * Math.random());
   aClap.gain.setTargetAtTime(0.05 * clapAmt, now, 0.05);
+}
+// Round bell: n strikes of a struck-metal tone (fundamental plus an inharmonic partial).
+function bell(n) {
+  if (!audioOn || !actx) return;
+  for (let i = 0; i < n; i++) {
+    const t0 = actx.currentTime + i * 0.34;
+    [[1180, 0.22], [3260, 0.07]].forEach(([f, a]) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(a, t0 + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.3);
+      o.connect(g).connect(actx.destination); o.start(t0); o.stop(t0 + 1.4);
+    });
+  }
 }
 const sndBtn = document.getElementById("snd");
 sndBtn.addEventListener("click", () => {
@@ -1056,7 +1105,7 @@ function makeFighter(src, clips, color) {
   const gloves = [0, 1].map(() => { const g = new THREE.Mesh(new THREE.SphereGeometry(0.075, 20, 14), gloveM); g.scale.set(1, 0.9, 1.15); g.castShadow = true; scene.add(g); return g; });
   const B = (n) => bone(root, n);
   const rig = { L: [B("LeftArm"), B("LeftForeArm"), B("LeftHand")], R: [B("RightArm"), B("RightForeArm"), B("RightHand")],
-    head: B("Head"), neck: B("Neck"), spine: B("Spine"), chest: B("Spine1"), upper: B("Spine2"),
+    head: B("Head"), neck: B("Neck"), hips: B("Hips"), spine: B("Spine"), chest: B("Spine1"), upper: B("Spine2"),
     legs: { L: [B("LeftUpLeg"), B("LeftLeg"), B("LeftFoot")], R: [B("RightUpLeg"), B("RightLeg"), B("RightFoot")] } };
   ring.add(root);   // fighters live on the canvas, so they turn with the ring
   // r = sprung hit reactions: x knockback (m), pitch head snap, yaw head turn, bend body fold
@@ -1064,6 +1113,7 @@ function makeFighter(src, clips, color) {
   const foot = () => ({ p: null, from: new THREE.Vector3(), s: 1, dur: 0.2, lift: 0, q: new THREE.Quaternion() });
   const guard = { L: [new THREE.Vector3(), new THREE.Vector3()], R: [new THREE.Vector3(), new THREE.Vector3()] };
   return { root, mixer, idle, walk, crouch, gloves, rig, r, guard, feet: { L: foot(), R: foot() }, fat: 0, hurt: 0, nextStumble: 0, hurtCrouch: 0,
+    kdS: -1, turn: 0, restW: 0, wl: 0, wd: 0, tw: 0,
     evade: new THREE.Vector3(), evadeW: new THREE.Vector3(), headN: new THREE.Vector3(), chestN: new THREE.Vector3(),
     phase: fighters.length * 2.3 + 0.7 };
 }
@@ -1194,41 +1244,126 @@ const KDEF = {
 const rngD = mulberry32(97531);   // separate stream for kick defence, so outcomes don't fall into step with combo choice
 const pickD = (table) => { const x = rngD(); let acc = 0; for (const [k, q] of table) { acc += q; if (x < acc) return k; } return table[table.length - 1][0]; };
 const pickW = (list) => { let sum = 0; for (const [, w] of list) sum += w; let x = rng() * sum; for (const [c, w] of list) { x -= w; if (x <= 0) return c; } return list[0][0]; };
+// Defence per punch. "partial" = the guard is up but the shot still gets through; "weave" = a U-shaped roll under a hook;
+// "sidestep" = a step off the line. Both fighters use the same tables: neither one is built to win.
 const DEFENSE = {
-  straight: { L: [["land", .3], ["block", .22], ["parry", .18], ["slip", .18], ["pull", .07], ["miss", .05]],
-              R: [["land", .3], ["block", .3], ["slip", .2], ["pull", .13], ["miss", .07]] },
-  hook: [["land", .3], ["block", .35], ["duck", .25], ["miss", .1]],
-  upper: [["land", .4], ["block", .4], ["pull", .2]],
-  body: [["land", .55], ["block", .45]],
+  straight: { L: [["land", .26], ["block", .2], ["partial", .08], ["parry", .14], ["slip", .18], ["pull", .06], ["sidestep", .04], ["miss", .04]],
+              R: [["land", .26], ["block", .24], ["partial", .08], ["slip", .2], ["pull", .1], ["sidestep", .06], ["miss", .06]] },
+  hook: [["land", .27], ["block", .3], ["partial", .08], ["weave", .27], ["miss", .08]],
+  upper: [["land", .35], ["block", .35], ["partial", .1], ["pull", .2]],
+  body: [["land", .5], ["block", .4], ["partial", .1]],
 };
-const G = { t: 0.3, ev: [], seg: [], lastEx: false, fat: [0, 0], hurt: false };
+const EVASIVE = { slip: 1, duck: 1, parry: 1, pull: 1, weave: 1, sidestep: 1 };
+const OFFLINE = { slip: 1, duck: 1, pull: 1, weave: 1, sidestep: 1 };   // defences that move the target, so the shot really misses
+
+// ---------- Rounds ----------
+// A fight is three 3-minute rounds. The schedule drives the choreography, not just the clock: the director only books
+// exchanges inside a round, the first fight's Round 1 ends on a scripted knockdown of the blue corner, and between
+// rounds both men walk to their corners. After Round 3 they reset and a rematch starts (without the scripted knockdown).
+const RLEN = 180, BRK = 7, KDLEN = 7, ENDLEN = 10, KO_LEAD = 3.8;
+const KO_T = RLEN;                    // the knockdown punch lands exactly as Round 1's clock hits 0:00
+const CORNER_TH = Math.PI * 7 / 8;    // orbit angle that puts red at the red corner pad and blue at the blue one
+const PH = [];
+function buildFight(n, t) {
+  for (let r = 1; r <= 3; r++) {
+    PH.push({ type: "fight", r, n, t0: t, t1: t + RLEN }); t += RLEN;
+    if (r === 1 && n === 0) { PH.push({ type: "kd", r, n, t0: t, t1: t + KDLEN }); t += KDLEN; }
+    if (r < 3) { PH.push({ type: "break", r, n, t0: t, t1: t + BRK }); t += BRK; }
+  }
+  PH.push({ type: "end", r: 3, n, t0: t, t1: t + ENDLEN });
+}
+function phaseAt(t) {
+  if (!PH.length) buildFight(0, 0);
+  while (PH[PH.length - 1].t1 <= t) { const last = PH[PH.length - 1]; buildFight(last.n + 1, last.t1); }
+  let k = PH.length - 1; while (k > 0 && PH[k].t0 > t) k--;
+  return PH[k];
+}
+// How busy the round is (0 = feeling each other out, 1 = all-out): Round 1 builds, Round 2 holds, Round 3 is the hottest.
+function intensity(ph, t) {
+  const p = Math.min(1, Math.max(0, (t - ph.t0) / RLEN));
+  return ph.r === 1 ? 0.28 + 0.37 * p : ph.r === 2 ? 0.52 + 0.14 * p : 0.74 + 0.2 * p;
+}
+// Fatigue floor: creeps up through each round and across the fight.
+function fatBase(ph, t) { return ph.type === "fight" ? 0.06 * (ph.r - 1) + 0.12 * Math.min(1, (t - ph.t0) / RLEN) : 0; }
+// Round 2 after the knockdown: blue is more careful early on, and it wears off over two minutes.
+function caution(ph, t) { return ph.type === "fight" && ph.r === 2 && ph.n === 0 ? Math.max(0, 1 - (t - ph.t0) / 120) : 0; }
+const sstep = (a, b, x) => ease(Math.min(1, Math.max(0, (x - a) / (b - a))));
+const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+const G = { t: 0.3, ev: [], seg: [], lastEx: false, fat: [0, 0], hurt: false, mom: 0, angle: false };
+// Segments place the pair on the canvas: orbit angle th, distance D, centre (cx, cz). Each eases in from the last over `e` s;
+// a segment with thT walks the orbit to that angle instead of turning at a steady rate.
 function stateAt(t) {
   let k = G.seg.length - 1; while (k > 0 && G.seg[k].t0 > t) k--;
-  const g = G.seg[k], e = ease(Math.min(1, Math.max(0, (t - g.t0) / 0.7)));
-  return { th: g.th0 + g.thV * (t - g.t0), D: g.pD + (g.D - g.pD) * e, cx: g.pcx + (g.cx - g.pcx) * e, cz: g.pcz + (g.cz - g.pcz) * e };
+  const g = G.seg[k], e = ease(Math.min(1, Math.max(0, (t - g.t0) / g.e)));
+  const th = g.thT === undefined ? g.th0 + g.thV * (t - g.t0) : g.th0 + wrapA(g.thT - g.th0) * e;
+  return { th, D: g.pD + (g.D - g.pD) * e, cx: g.pcx + (g.cx - g.pcx) * e, cz: g.pcz + (g.cz - g.pcz) * e };
 }
-function pushSeg(t0, D, thV, cx, cz) {
-  const rr = Math.hypot(cx, cz); if (rr > 1.4) { cx *= 1.4 / rr; cz *= 1.4 / rr; }   // stay off the fence
+function pushSeg(t0, D, thV, cx, cz, o = {}) {
+  const rr = Math.hypot(cx, cz); if (!o.free && rr > 1.4) { cx *= 1.4 / rr; cz *= 1.4 / rr; }   // stay off the fence
   const st = G.seg.length ? stateAt(t0) : { th: 0.35, D, cx: 0, cz: 0 };
-  G.seg.push({ t0, th0: st.th, thV, D, cx, cz, pD: st.D, pcx: st.cx, pcz: st.cz });
+  G.seg.push({ t0, th0: st.th, thV, D, cx, cz, pD: st.D, pcx: st.cx, pcz: st.cz, e: o.e || 0.7, thT: o.thT });
 }
+const book = (t, who, arm, kind, out, sp, pw, extra) => G.ev.push(Object.assign({ t, who, arm, kind, out, sp, pw }, extra));
+
+// The end of Round 1: a real exchange, red finds the opening, and the right hand lands as the clock hits zero.
+function bookKO(ph) {
+  const T1 = ph.t1, st = stateAt(G.t);
+  pushSeg(G.t, 1.12, 0.05, st.cx * 0.5, st.cz * 0.5, { e: 0.9 });
+  book(T1 - 3.4, 1, "L", "straight", "block", 1.2, 0.55);      // blue jabs into the guard
+  book(T1 - 3.05, 1, "R", "straight", "slip", 1.0, 0.85);      // red slips the cross...
+  book(T1 - 2.7, 0, "L", "hook", "block", 1.05, 0.8);          // ...and counters with a hook blue covers
+  book(T1 - 2.0, 1, "L", "hook", "weave", 1.0, 0.8);           // blue fires back, red rolls under it
+  book(T1 - 1.05, 0, "L", "body", "land", 1.05, 0.8);          // red digs to the body and blue's hands come down
+  book(T1 - IMPACT, 0, "R", "straight", "land", 1.0, 1.0, { ko: true });   // the right hand down the middle
+  G.t = T1; G.lastEx = true;
+}
+// Between exchanges' world: the knockdown pause, the corners, the end of the fight.
+function bookBreak(ph) {
+  if (ph.type === "kd") {
+    // red backs off to a neutral spot while blue is down; blue's spot on the canvas doesn't move
+    const t = ph.t0 + 0.5, st = stateAt(t), Dn = 2.5, ax = Math.cos(st.th), az = -Math.sin(st.th);
+    pushSeg(t, Dn, 0, st.cx + ax * (st.D - Dn) / 2, st.cz + az * (st.D - Dn) / 2, { e: 2.2, free: true });
+  } else {
+    // both walk to their own corners
+    pushSeg(ph.t0 + 0.5, 5.5, 0, 0, 0, { e: 2.8, thT: CORNER_TH, free: true });
+    G.fat = G.fat.map((x) => x * 0.4);
+  }
+  G.t = ph.t1; G.lastEx = false;
+}
+
 function gen(until) {
   while (G.t < until) {
-    const t0 = G.t;
-    if (!G.seg.length || G.lastEx || rng() < 0.12) {
-      // reset: circle, change angles, maybe a feint
-      const dur = 0.6 + rng() * 1.1, st = G.seg.length ? stateAt(t0) : { cx: 0, cz: 0 };
-      pushSeg(t0, 1.42 + rng() * 0.22, (rng() < 0.5 ? -1 : 1) * (0.2 + rng() * 0.35), st.cx * 0.6 + (rng() - 0.5) * 0.7, st.cz * 0.6 + (rng() - 0.5) * 0.7);
-      if (rng() < 0.45) G.ev.push({ t: t0 + 0.25 + rng() * Math.max(0.1, dur - 0.7), who: rng() < 0.5 ? 0 : 1, arm: rng() < 0.6 ? "L" : "R", kind: "feint", out: "feint", sp: 1.3, pw: 0.3 });
-      G.fat = G.fat.map((x) => Math.max(0, x - 0.03 * dur));
+    const t0 = G.t, ph = phaseAt(t0 + 1e-6);
+    if (ph.type !== "fight") { bookBreak(ph); continue; }
+    const ko = ph.r === 1 && ph.n === 0, stop = ko ? ph.t1 - KO_LEAD : ph.t1;
+    if (t0 >= stop - 1e-6) { if (ko) bookKO(ph); else G.t = ph.t1; continue; }
+    const I = intensity(ph, t0), room = stop - t0, fb = fatBase(ph, t0), cau = caution(ph, t0);
+    const opening = ph.t0 > 0 && t0 - ph.t0 < 0.05;   // walking out of the corners
+    if (room < 4.5 || opening || !G.seg.length || G.lastEx || rng() < 0.12) {
+      // reset: circle, change angles, feint, or take a breather. Early rounds are patient; Round 3 barely resets.
+      const st = G.seg.length ? stateAt(t0) : { cx: 0, cz: 0 };
+      const breather = !opening && rng() < 0.08 * (1.3 - I);
+      let dur = opening ? 2.6 : breather ? 2.6 + rng() * 1.4 : (0.6 + rng() * 1.1) * (1.9 - 1.3 * I) + 0.25 * cau;
+      dur = room < 4.5 ? room : Math.min(dur, room);
+      const D = opening ? 1.6 : breather ? 1.75 + rng() * 0.2 : 1.4 + rng() * 0.22 + 0.14 * (1 - I);
+      const v = G.angle ? 0.5 + rng() * 0.3 : breather ? 0.12 + rng() * 0.1 : 0.2 + rng() * 0.35;   // after slipping off the line, take the new angle
+      pushSeg(t0, D, (rng() < 0.5 ? -1 : 1) * v, opening ? 0 : st.cx * 0.6 + (rng() - 0.5) * 0.7, opening ? 0 : st.cz * 0.6 + (rng() - 0.5) * 0.7,
+        { e: opening ? 2.2 : breather ? 1.2 : 0.7 });
+      G.angle = false;
+      if (!opening && dur > 0.9 && rng() < 0.3 + 0.3 * (1 - I))
+        book(t0 + 0.25 + rng() * Math.max(0.1, dur - 0.9), rng() < 0.5 ? 0 : 1, rng() < 0.6 ? "L" : "R", "feint", "feint", 1.3, 0.3);
+      G.fat = G.fat.map((x) => Math.max(0, x - (breather ? 0.06 : 0.03) * dur));
       G.t = t0 + dur; G.lastEx = false;
       continue;
     }
-    // exchange: red presses more, blue counters more
-    const who = rng() < (G.hurt ? 0.88 : 0.6) ? 0 : 1, opp = 1 - who, st = stateAt(t0);
+    // exchange. Momentum drifts and swings with clean shots, so the edge keeps changing hands.
+    G.mom = Math.max(-1, Math.min(1, G.mom * 0.8 + (rng() - 0.5) * 0.7));
+    const who = rng() < (G.hurt ? 0.88 : 0.5 + 0.22 * G.mom + 0.12 * cau) ? 0 : 1, opp = 1 - who, st = stateAt(t0);
     const sg = who === 0 ? 1 : -1, axx = Math.cos(st.th), axz = -Math.sin(st.th);
     const weak = G.hurt && who === 1 ? 1 : 0;   // a hurt fighter throws slower, arm-only shots
     const hurtOpp = G.hurt && opp === 1;
+    const swing = (w, out, pw) => { if (out === "land" && pw > 0.75) G.mom = Math.max(-1, Math.min(1, G.mom + (w === 0 ? 0.22 : -0.22))); };
     const x = rng();
     if (!weak && x < 0.07) {
       // clinch: tie up the head, one or two knees to the body, then break
@@ -1237,7 +1372,7 @@ function gen(until) {
       const n = rng() < 0.55 ? 2 : 1;
       for (let k = 0; k < n; k++) {
         const sp = KSP.knee * (0.95 + rng() * 0.1), out = hurtOpp ? pick([["land", .8], ["kblock", .2]]) : pickD(KDEF.knee);
-        G.ev.push({ t, who, arm: k % 2 ? "L" : "R", kind: "knee", out, sp, pw: 0.85 });
+        book(t, who, k % 2 ? "L" : "R", "knee", out, sp, 0.85);
         G.fat[who] += 0.05; if (out === "land") G.fat[opp] += 0.05;
         lastT = t; lastSp = sp; t += 0.62 / sp;
       }
@@ -1248,31 +1383,35 @@ function gen(until) {
       // one man walks forward and gets stopped by a push kick
       pushSeg(t0, 0.98, 0, st.cx + sg * axx * 0.45, st.cz + sg * axz * 0.45);
       const sp = KSP.teep * (0.95 + rng() * 0.1), tt = t0 + 0.3;
-      G.ev.push({ t: tt, who: opp, arm: "L", kind: "teep", out: pickD(KDEF.teep), sp, pw: 0.85 });
+      book(tt, opp, "L", "teep", pickD(KDEF.teep), sp, 0.85);
       G.t = tt + TOTAL / sp + 0.2; G.lastEx = true;
       continue;
     }
     const kicks = !weak && rng() < 0.42;
-    const combo = kicks ? pickW(KCOMBOS) : COMBOS[Math.floor(rng() * COMBOS.length)];
+    let combo = kicks ? pickW(KCOMBOS) : COMBOS[Math.floor(rng() * COMBOS.length)];
+    const maxN = Math.max(combo[0][1] === "feint" ? 2 : 1, 1 + Math.floor(I * 2.6 + rng() * 1.2));   // short combos early, long ones late
+    if (combo.length > maxN) combo = combo.slice(0, maxN);
     pushSeg(t0, kicks ? 0.92 : 1.2, (rng() < 0.5 ? -1 : 1) * 0.08, st.cx + sg * axx * 0.35, st.cz + sg * axz * 0.35);
     let t = t0 + 0.5, lastArm = null, lastT = -9, lastSp = 1, lastKick = false;
+    const tired = Math.min(1, G.fat[who] + fb), careful = who === 1 ? 1 - 0.06 * cau : 1;
     for (const [arm, kind] of combo) {
-      if (kind === "feint") { G.ev.push({ t, who, arm, kind: "feint", out: "feint", sp: 1.3, pw: 0.3 }); t += 0.32; continue; }
+      if (kind === "feint") { book(t, who, arm, "feint", "feint", 1.3, 0.3); t += 0.32; continue; }
       const kick = isKick(kind), jab = kind === "straight" && arm === "L";
       if (lastKick) t = Math.max(t, lastT + 0.6 / lastSp);                  // land the kicking foot before the next shot
       else if (kick && lastT > 0) t = Math.max(t, lastT + 0.32 / lastSp);
       else if (arm === lastArm) t = Math.max(t, lastT + 0.62 / lastSp + 0.02);
       const pw = (kick ? 0.8 + rng() * 0.2 : jab ? 0.45 + rng() * 0.25 : 0.75 + rng() * 0.25) * (weak ? 0.6 : 1);
       const sp = (kick ? KSP[kind] * (0.95 + rng() * 0.1) : (jab ? 1.2 : 0.95) + rng() * 0.15)
-        * (1 - (kick ? 0.12 : 0.25) * Math.min(1, G.fat[who])) * (weak ? 0.75 : 1);
+        * (1 - (kick ? 0.12 : 0.25) * tired) * (weak ? 0.75 : 1) * careful;
       const out = kick ? (hurtOpp ? pick([["land", .7], [kind === "lowkick" ? "check" : kind === "headkick" ? "hblock" : "kblock", .3]]) : pickD(KDEF[kind]))
         : hurtOpp ? pick(kind === "body" ? [["land", .75], ["block", .25]] : [["land", .55], ["block", .3], ["miss", .15]])
         : pick(kind === "straight" ? DEFENSE.straight[arm] : DEFENSE[kind]);
-      G.ev.push({ t, who, arm, kind, out, sp, pw });
+      book(t, who, arm, kind, out, sp, pw);
+      swing(who, out, pw);
       G.fat[who] += kick ? 0.055 : 0.035; if (out === "land") G.fat[opp] += (kick ? 0.07 : 0.05) * pw;
       lastArm = arm; lastT = t; lastSp = sp; lastKick = kick;
       const hitT = t + IMPACT / sp;
-      // counters off successful defence
+      // counters off successful defence, or off a miss that leaves the thrower open
       let c = null;
       const cm = hurtOpp ? 0.15 : 1;
       if (kick) {
@@ -1280,26 +1419,30 @@ function gen(until) {
         if (rng() < pc * cm) c = out === "catch" ? ["R", "straight"] : out === "check" ? (rng() < 0.5 ? ["R", "straight"] : ["L", "hook"])
           : out === "kblock" ? (rng() < 0.5 ? ["L", "hook"] : ["R", "lowkick"]) : ["R", "straight"];
       } else {
-        const evasive = out === "slip" || out === "duck" || out === "parry" || out === "pull";
-        if ((evasive && rng() < (opp === 1 ? (G.hurt ? 0.1 : 0.8) : 0.55)) || (out === "block" && rng() < 0.3 * cm))
-          c = out === "slip" && !hurtOpp && rng() < 0.3 ? ["R", "lowkick"]
+        const evasive = EVASIVE[out] === 1 || out === "miss";
+        if ((evasive && rng() < (hurtOpp ? 0.1 : 0.62)) || (out === "block" && rng() < 0.3 * cm))
+          c = (out === "slip" || out === "sidestep") && !hurtOpp && rng() < 0.3 ? ["R", "lowkick"]
             : out === "duck" ? (rng() < 0.5 ? ["R", "upper"] : ["L", "hook"])
+            : out === "weave" ? (rng() < 0.5 ? ["L", "hook"] : ["R", "body"])
             : out === "slip" ? (arm === "L" ? ["R", "straight"] : ["L", "hook"])
+            : out === "sidestep" ? ["L", "hook"]
             : out === "block" ? ["L", "hook"] : ["R", "straight"];
+        if (out === "weave" || out === "sidestep" || out === "slip") G.angle = true;
       }
       if (c) {
         const ck = isKick(c[1]), csp = ck ? KSP[c[1]] : 1.05 + rng() * 0.15;
         const ct = hitT + (out === "catch" ? 0.18 : ck ? 0.1 : 0.04);
-        let cout = ck ? pickD(KDEF[c[1]]) : pick([["land", .5], ["block", .3], ["pull", .1], ["miss", .1]]);
+        let cout = ck ? pickD(KDEF[c[1]]) : pick([["land", .45], ["block", .28], ["partial", .07], ["pull", .1], ["miss", .1]]);
         if (cout === "catch") cout = "kblock";
-        G.ev.push({ t: ct, who: opp, arm: c[0], kind: c[1], out: cout, sp: csp, pw: 0.9 });
+        book(ct, opp, c[0], c[1], cout, csp, 0.9);
+        swing(opp, cout, 0.9);
         G.fat[opp] += 0.035; if (cout === "land") G.fat[who] += 0.05;
         lastT = ct; lastSp = csp; t = ct;
         break;
       }
       t += kick ? 0.6 / sp : (0.28 + rng() * 0.1) / sp;
     }
-    G.t = lastT + TOTAL / lastSp + 0.15; G.lastEx = true;
+    G.t = lastT + TOTAL / lastSp + 0.15 + 0.35 * cau * (who === 1 ? 1 : 0.4); G.lastEx = true;   // blue takes longer to reset in Round 2
   }
   G.ev.sort((a, b) => a.t - b.t);
 }
@@ -1315,7 +1458,7 @@ function active(who, T) {
 
 const dW = new THREE.Vector3(), dA = new THREE.Vector3(), dB = new THREE.Vector3(), faceQ = new THREE.Quaternion(), gdir = new THREE.Vector3();
 const hitPt = new THREE.Vector3(), headPos = new THREE.Vector3();
-const debug = window.__fight = { contacts: [] };
+const debug = window.__fight = { contacts: [], stats: { land: [0, 0], def: [0, 0], stagger: [0, 0] } };
 const RAX = new THREE.Vector3(), FW = new THREE.Vector3(), tgt = new THREE.Vector3(), MFW = new THREE.Vector3(), MLX = new THREE.Vector3();
 const FP = new THREE.Vector3(), FT = new THREE.Vector3(), FL = new THREE.Vector3(), PL = new THREE.Vector3();
 // Rotate a bone about a world axis, on top of whatever the animation already set.
@@ -1430,8 +1573,10 @@ if (glb) new GLTFLoader().parse(glb, "", (gltf) => { try {
 
 // ---------- Motion ----------
 const D2R = Math.PI / 180;
-let ang = arena.target * D2R, vel = 0, activeGlow = 0, lastActive = -1, flash = 0, fightT = 0, prevT = -1;
-let hitstop = 0, shake = 0, pendingSpark = null;
+// Test hook: ?at=175 starts the fight clock 175 s in (just before the end of Round 1).
+const startAt = (() => { const v = parseFloat(new URLSearchParams(location.search).get("at")); return isFinite(v) && v > 0 ? v : 0; })();
+let ang = arena.target * D2R, vel = 0, activeGlow = 0, lastActive = -1, flash = 0, fightT = startAt, prevT = -1;
+let hitstop = 0, shake = 0, pendingSpark = null, debt = 0;
 const clock = new THREE.Clock();
 const loc = [new THREE.Vector3(), new THREE.Vector3()];
 
@@ -1451,11 +1596,11 @@ function aimPoint(f, o, side, A, out) {
   const e = A.e, kind = A.kind;
   if (kind === "body") { out.copy(o.chestN); out.y -= 0.04; }
   else { out.copy(o.headN); out.y += kind === "upper" ? -0.03 : 0.07; }
-  if (e.out === "slip" || e.out === "pull" || e.out === "duck") out.sub(o.evadeW);
+  if (OFFLINE[e.out]) out.sub(o.evadeW);
   if (e.out === "miss") out.addScaledVector(RAX, side === "L" ? -0.28 : 0.28); out.y += 0.05;
   if (e.out === "parry") { out.addScaledVector(RAX, side === "L" ? -0.3 : 0.3); out.y -= 0.06; }
   f.rig[side][0].getWorldPosition(v3);
-  const back = (kind === "body" ? 0.2 : 0.17) + (e.out === "block" ? 0.1 : 0);
+  const back = (kind === "body" ? 0.2 : 0.17) + (e.out === "block" ? 0.1 : e.out === "partial" ? 0.04 : 0);
   return out.addScaledVector(v3.sub(out).setY(0).normalize(), back);
 }
 
@@ -1529,30 +1674,117 @@ function impacts(t0, t1) {
     if (e.kind === "feint" || !(hit > t0 && hit <= t1)) continue;
     const d = fighters[1 - e.who];
     crowdReact(e);
-    if (isKick(e.kind)) { kickImpact(e, d, fighters[e.who]); continue; }
-    if (e.out === "land") {
-      const im = IMPULSE[e.kind][e.arm], k = (0.5 + 0.5 * e.pw) * (1 + 0.5 * d.hurt);
+    if (isKick(e.kind)) { if (e.out === "land") debug.stats.land[e.who]++; kickImpact(e, d, fighters[e.who]); continue; }
+    if (OFFLINE[e.out] || e.out === "block" || e.out === "parry") debug.stats.def[1 - e.who]++;
+    if (e.out === "land" || e.out === "partial") {
+      const im = IMPULSE[e.kind][e.arm], k = (0.5 + 0.5 * e.pw) * (1 + 0.5 * d.hurt) * (e.out === "partial" ? 0.45 : 1);
       d.r.xv += (im.xv || 0) * k; d.r.pv += (im.pv || 0) * k; d.r.yv += (im.yv || 0) * k; d.r.bv += (im.bv || 0) * k;
-      d.fat += 0.05 * e.pw;
-      const heavy = e.pw > 0.7;
+      d.fat += 0.05 * e.pw * (e.out === "partial" ? 0.4 : 1);
+      const heavy = e.pw > 0.7 && e.out === "land";
       hitstop = heavy ? 0.085 : 0.04; shake = Math.max(shake, heavy ? 1 : 0.4);
       pendingSpark = { who: e.who, arm: e.arm, big: heavy };
+      if (e.out === "land") debug.stats.land[e.who]++;
+      if (e.ko) {
+        // the knockdown shot: head snaps back and round, weight goes onto the heels
+        d.r.pv -= 10; d.r.yv -= 5; d.r.xv -= 1.4;
+        hitstop = 0.16; shake = 1.7; crowdHit(1.4);
+      } else if (heavy && e.pw > 0.85 && e.kind !== "body" && Math.random() < 0.28) {
+        // a clean, heavy shot can buckle the legs for a moment; he gives ground and finds his feet
+        d.r.kdv += 1.1; d.r.lv += (Math.random() < 0.5 ? -1 : 1) * 0.7; d.r.xv -= 0.9; debug.stats.stagger[1 - e.who]++;
+      }
     } else if (e.out === "block") { d.r.xv -= 0.55 * e.pw; d.r.pv -= 1.2 * e.pw; shake = Math.max(shake, 0.25); hitstop = 0.025; }
     else if (e.out === "parry") shake = Math.max(shake, 0.1);
   }
 }
 
+// ---------- Knockdown ----------
+// Keyed on s = seconds since the knockdown punch landed. The punch's own springs snap the head; then he takes an unstable
+// step back, the knees go, he sits down and falls back onto the canvas, stays down, sits up, pushes up onto his gloves
+// and a knee, plants the lead foot and stands with his guard coming back up.
+const kf = (keys, s) => {
+  if (s <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) if (s < keys[i][0]) { const [a, va] = keys[i - 1], [b, vb] = keys[i]; return va + (vb - va) * ease((s - a) / (b - a)); }
+  return keys[keys.length - 1][1];
+};
+const KDK = {
+  q:     [[0, 1], [0.55, 0.9], [1.0, 0.56], [1.35, 0.2], [1.6, 0.17], [3.0, 0.17], [3.6, 0.21], [4.4, 0.5], [4.95, 0.64], [5.7, 0.93], [6.4, 1]],   // hip height, share of standing
+  back:  [[0, 0], [0.55, 0.36], [1.4, 0.6], [5.5, 0.6], [6.8, 0]],                    // ground given up, metres
+  lean:  [[0, 0], [0.12, -0.26], [0.55, -0.12], [1.0, 0.12], [1.3, -0.45], [1.65, -1.22], [2.3, -1.15], [2.9, -1.05], [3.55, 0.2], [4.35, 1.05], [4.95, 0.5], [5.7, 0.22], [6.5, 0]],
+  roll:  [[0.6, 0], [1.2, 0.16], [1.7, 0.06], [3.0, 0.06], [3.6, 0.18], [4.4, 0], [6, 0]],
+  neck:  [[0, 0], [1.5, 0.05], [2.3, 0.45], [3.0, 0.55], [3.6, 0.1], [4.4, 0.3], [5.6, 0.05]],
+  sit:   [[0.9, 0], [1.35, 1], [3.2, 1], [4.15, 0]],          // both feet out in front: sitting / lying
+  kneel: [[3.5, 0], [4.3, 1], [4.9, 1], [5.6, 0]],          // rear knee on the mat
+  plant: [[3.6, 0], [4.35, 1], [5.1, 1], [5.7, 0]],          // lead foot planted forward, knee up
+  arm:   [[0, 0], [0.3, 0.7], [0.8, 1], [5.1, 1], [6.0, 0]], // arms off the guard
+  side:  [[0.9, 0], [1.45, 1], [3.0, 1], [4.0, 0]],          // gloves on the mat beside him
+  front: [[3.1, 0], [4.1, 1], [4.75, 1], [5.25, 0]],           // gloves on the mat under his shoulders, pushing up
+  crouch:[[0.4, 0], [1.0, 0.45], [5.5, 0.45], [6.3, 0]],
+};
+const KD_END = 6.8;
+function kdLeg(f, side, FT, PL) {
+  const s = f.kdS, sit = kf(KDK.sit, s), kn = kf(side === "R" ? KDK.kneel : KDK.plant, s), lat = side === "L" ? 0.17 : -0.17;
+  if (sit < 0.001 && kn < 0.001) return;
+  f.rig.hips.getWorldPosition(KH);
+  if (sit > 0.001) {
+    KP.copy(KH).addScaledVector(KF, 0.72).addScaledVector(KX, lat); KP.y = 0.09; FT.lerp(KP, sit);
+    KPole.copy(UP).addScaledVector(KF, 0.4).addScaledVector(KX, lat * 2).normalize(); PL.lerp(KPole, sit).normalize();
+  }
+  if (kn > 0.001) {
+    if (side === "R") { KP.copy(KH).addScaledVector(KF, -0.44).addScaledVector(KX, -0.12); KP.y = 0.1; KPole.copy(KF).addScaledVector(UP, -0.2).normalize(); }
+    else { KP.copy(KH).addScaledVector(KF, 0.46).addScaledVector(KX, 0.14); KP.y = 0.09; KPole.copy(KF).addScaledVector(UP, 0.5).normalize(); }
+    FT.lerp(KP, kn); PL.lerp(KPole, kn).normalize();
+  }
+  // going from sitting to kneeling he rolls over a hip: the feet swing out to the side instead of through his body
+  const sw = Math.min(1, 4 * sit * kn);
+  if (sw > 0.001) { FT.addScaledVector(KX, (side === "R" ? -0.32 : 0.12) * sw); FT.y += 0.05 * sw; }
+}
+function kdArmTarget(f, side, out) {
+  const s = f.kdS, sg = side === "L" ? 1 : -1;
+  f.rig[side][0].getWorldPosition(S0);
+  out.copy(S0).addScaledVector(RAX, sg * 0.1).addScaledVector(FW, 0.05); out.y -= 0.5;          // arms hanging
+  const ws = kf(KDK.side, s), wf = kf(KDK.front, s);
+  if (ws > 0.001) { E0.copy(S0).addScaledVector(RAX, sg * 0.3).addScaledVector(FW, -0.05); E0.y = 0.14; out.lerp(E0, ws); }
+  if (wf > 0.001) { E0.copy(S0).addScaledVector(FW, 0.06).addScaledVector(RAX, sg * 0.04); E0.y = 0.14; out.lerp(E0, wf); }
+  return out;
+}
+
 const forceHurt = location.search.includes("hurt");   // test hook
+let eggUntil = -1, lastPh = null, kdCheer = false;
 function updateFighters(dt, t) {
-  const T = fightT;
-  const hurtGoal = arena.allSeen || forceHurt ? 1 : 0;
+  const T = fightT, ph = phaseAt(T), sK = T - KO_T;
+  // Blue's damage: the easter egg hurts him for a while (only during a round); the knockdown leaves him
+  // hurt as he gets up, still shaky through the break, and a little careful early in Round 2.
+  if (arena.allSeen && eggUntil < 0) eggUntil = T + 25;
+  let hurtGoal = forceHurt || (T < eggUntil && ph.type === "fight") ? 1 : 0;
+  if (sK >= 0 && sK < KDLEN) hurtGoal = sK > 4.6 ? 0.8 : 0;
+  else if (sK >= KDLEN && sK < KDLEN + BRK) hurtGoal = Math.max(hurtGoal, 0.45);
+  else if (sK >= KDLEN + BRK && sK < KDLEN + BRK + 45) hurtGoal = Math.max(hurtGoal, 0.28 * (1 - (sK - KDLEN - BRK) / 45));
   G.hurt = hurtGoal === 1;
-  fighters[1].hurt += (hurtGoal - fighters[1].hurt) * Math.min(1, dt * 0.8);
+  fighters[1].hurt += (hurtGoal - fighters[1].hurt) * Math.min(1, dt * (sK >= 0 && sK < KDLEN ? 2 : 0.8));
+  fighters.forEach((f, i) => {
+    f.kdS = i === 1 && sK >= 0 && sK < KD_END ? sK : -1;
+    // corners: turn and walk to your stool's spot, turn back to face the centre, hands down, breathe; guard up to walk out
+    let turn = 0, rest = 0;
+    if (ph.type === "break" || ph.type === "end") {
+      const b = T - ph.t0, len = ph.t1 - ph.t0;
+      turn = Math.PI * (sstep(0.2, 1.0, b) - sstep(2.9, 3.9, b));
+      rest = Math.max(sstep(0.6, 1.6, b), i === 0 && ph.r === 1 && ph.n === 0 ? 0.45 : 0) * (1 - sstep(len - 1.6, len - 0.6, b));
+      f.fat = Math.max(0.2, f.fat - dt * 0.05);
+    } else if (ph.type === "kd" && i === 0) rest = 0.45 * sstep(1.0, 2.0, T - ph.t0);   // red waits in a neutral spot, hands half down
+    f.turn = turn; f.restW = rest;
+    if (ph.type === "fight") f.fat = Math.max(f.fat, fatBase(ph, T));
+  });
+  if (ph !== lastPh && frozenT === null) {
+    if (lastPh && lastPh.type === "fight") { bell(3); crowdHit(0.5); }
+    else if (lastPh && ph.type === "fight") bell(1);
+    lastPh = ph;
+  }
+  if (sK > 5.2 && sK < 5.4 && !kdCheer) { kdCheer = true; crowdHit(0.9); }   // he's up
   gen(T + (frozenT !== null ? 45 : 6));
   if (frozenT === null && prevT >= 0 && T > prevT) impacts(prevT, T);
   prevT = T;
   if (frozenT === null && G.ev.length > 90) G.ev = G.ev.filter((e) => e.t > T - 3);
-  if (G.seg.length > 24) G.seg.splice(0, G.seg.length - 12);
+  while (G.seg.length > 2 && G.seg[1].t0 < T - 1) G.seg.shift();
 
   // Where the director wants each fighter on the canvas (ring-local).
   const st = stateAt(T), ax = Math.cos(st.th), az = -Math.sin(st.th);
@@ -1573,7 +1805,7 @@ function updateFighters(dt, t) {
     spring(r, "l", "lv", 14, 6, dt); spring(r, "kd", "kdv", 30, 6, dt);
     if (h > 0.01) {
       f.fat = Math.max(f.fat, 0.9 * h);
-      if (frozenT === null && dt > 0 && t > f.nextStumble) {
+      if (frozenT === null && dt > 0 && t > f.nextStumble && f.kdS < 0) {
         if (f.nextStumble) {
           r.xv -= (0.5 + Math.random() * 0.8) * h;
           r.lv += (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.4) * h;
@@ -1609,10 +1841,19 @@ function updateFighters(dt, t) {
     for (const m of theirs) {
       const e = m.s; if (e.out === "land" || e.out === "miss") continue;
       const w = defW((m.u - IMPACT) / e.sp) * (e.out === "feint" ? 0.6 : 1);
-      if (w > best) { best = w; f.def = { type: e.out === "feint" ? "block" : e.out, w, e }; }
+      if (w > best) { best = w; f.def = { type: e.out === "feint" || e.out === "partial" ? "block" : e.out, w, e, u: m.u }; }
     }
     const D = f.def, dwt = D ? D.w : 0, typ = D ? D.type : "";
-    const slipSg = D && typ === "slip" ? (D.e.arm === "L" ? 1 : -1) : 0;
+    const slipSg = D && (typ === "slip" || typ === "sidestep") ? (D.e.arm === "L" ? 1 : -1) : 0;
+    // Weave: knees bend, the head travels a U under the hook and comes up on the far side of it, then drifts back to centre.
+    f.wl = 0; f.wd = 0; f.tw = 0;
+    if (typ === "weave") {
+      const rel = (D.u - IMPACT) / D.e.sp, p = Math.min(1, Math.max(0, (rel + 0.26) / 0.62));
+      const env = rel < 0.3 ? 1 : Math.max(0, 1 - ease((rel - 0.3) / 0.35)), end = D.e.arm === "L" ? 1 : -1;
+      f.wl = end * 0.15 * (1 - Math.cos(Math.PI * p)) / 2 * env;
+      f.wd = 0.2 * Math.sin(Math.PI * p) * env;
+      f.tw = -end * 0.22 * Math.sin(Math.PI * p) * env;     // shoulders turn with the roll
+    } else if (typ === "slip") f.tw = -slipSg * 0.25 * dwt;   // slipping turns the shoulders, not just the head
 
     const me = loc[i], them = loc[1 - i];
     const dx = them.x - me.x, dz = them.z - me.z, len = Math.hypot(dx, dz) || 1;
@@ -1620,8 +1861,9 @@ function updateFighters(dt, t) {
     const px = f.uz, pz = -f.ux;   // fighter's left-to-right axis on the canvas (matches RAX)
     const upperLoad = f.lead && f.lead.s.kind === "upper";
     const dip = upperLoad ? Math.max(0, -f.b) * 0.12 + Math.max(0, f.b) * 0.03 : 0;
-    const pull = typ === "pull" ? (isKick(D.e.kind) ? 0.24 : 0.13) * dwt : 0, duck = typ === "duck" ? 0.15 * dwt : 0, slip = -slipSg * 0.07 * dwt;
-    f.evade.set(-f.ux * pull + px * slip, -duck, -f.uz * pull + pz * slip);
+    const pull = typ === "pull" ? (isKick(D.e.kind) ? 0.24 : 0.13) * dwt : 0, duck = typ === "duck" ? 0.15 * dwt : 0;
+    const slip = -slipSg * (typ === "sidestep" ? 0.26 : 0.1) * dwt + f.wl;   // a sidestep moves the whole body off the line
+    f.evade.set(-f.ux * pull + px * slip, -duck - f.wd, -f.uz * pull + pz * slip);
     f.evadeW.copy(f.evade).applyQuaternion(ring.quaternion);
     const fwd = (f.b < 0 ? f.b * 0.1 : 0) + r.x - (typ === "block" ? 0.03 * dwt : 0);
     const sway = 0.03 * Math.sin(t * 1.1 + f.phase);
@@ -1629,13 +1871,22 @@ function updateFighters(dt, t) {
     const lat = sway + r.l + wob;
     f.root.position.set(me.x + f.ux * fwd + px * lat, bob - 0.07 * Math.max(0, f.b) - 0.035 * Math.max(0, -f.b) - dip - 0.25 * Math.max(0, r.kd), me.z + f.uz * fwd + pz * lat);
     f.root.position.add(f.evade);
-    f.root.rotation.set(0, Math.atan2(dx, dz) - 0.42 + sm(f, "yaw", 0.4 * f.twist + 0.25 * r.yaw + f.kyaw, dt), 0);
-    f.crouch.setEffectiveWeight(sm(f, "crouch", 0.32 + 0.16 * Math.max(0, f.b) + Math.min(0.35, Math.abs(r.x) * 1.6 + Math.abs(r.bend) * 0.5) + 0.25 * duck / 0.15 + (typ === "slip" ? 0.15 * dwt : 0) + 0.1 * f.fat + f.hurtCrouch
-      + (typ === "kblock" ? 0.12 * dwt : 0) + 0.3 * (fighters[1 - i].clinch || 0) - (f.kick ? 0.12 * f.kick.kw : 0), dt));
+    if (f.kdS >= 0) { const bk = kf(KDK.back, f.kdS); f.root.position.x -= f.ux * bk; f.root.position.z -= f.uz * bk; }
+    f.root.rotation.set(0, Math.atan2(dx, dz) - 0.42 + f.turn + sm(f, "yaw", 0.4 * f.twist + 0.25 * r.yaw + f.kyaw + 0.5 * f.tw, dt), 0);
+    f.crouch.setEffectiveWeight(sm(f, "crouch", 0.32 + 0.16 * Math.max(0, f.b) + Math.min(0.35, Math.abs(r.x) * 1.6 + Math.abs(r.bend) * 0.5) + 0.25 * duck / 0.15 + (typ === "slip" || typ === "sidestep" ? 0.15 * dwt : 0) + 0.1 * f.fat + f.hurtCrouch
+      + 2.2 * f.wd + (typ === "kblock" ? 0.12 * dwt : 0) + 0.3 * (fighters[1 - i].clinch || 0) - (f.kick ? 0.12 * f.kick.kw : 0) - 0.12 * f.restW
+      + (f.kdS >= 0 ? kf(KDK.crouch, f.kdS) : 0), dt));
     f.walk.setEffectiveWeight(0.1); f.walk.timeScale = 0.9;
     f.mixer.update(reduce ? 1e-5 : dt);   // never 0: a zero step does not rewrite the pose, and our IK would stack frame on frame
   });
   ring.updateMatrixWorld(true);
+  // Knockdown: lower the whole body to the keyed hip height. The feet stay on the mat, so the knees fold.
+  fighters.forEach((f) => {
+    if (f.kdS < 0) return;
+    f.rig.hips.getWorldPosition(v1);
+    f.root.position.y -= (v1.y - f.root.position.y) * (1 - kf(KDK.q, f.kdS));
+    f.root.updateMatrixWorld(true);
+  });
 
   // Pass 2: the step. Commit the body forward exactly as far as the punch needs; never walk through the other fighter.
   fighters.forEach((f, i) => {
@@ -1724,6 +1975,7 @@ function updateFighters(dt, t) {
         KP.copy(FT).addScaledVector(UP, 0.34).addScaledVector(KF, 0.08).addScaledVector(KX, 0.07); FT.lerp(KP, w);
         KPole.copy(KF).addScaledVector(KX, 0.8).normalize(); PL.lerp(KPole, w).normalize();
       }
+      if (f.kdS >= 0) kdLeg(f, side, FT, PL);
       legPose(f, side, FT, PL);
     });
     // rear foot pivots on rear-hand power shots
@@ -1734,23 +1986,31 @@ function updateFighters(dt, t) {
   fighters.forEach((f, i) => {
     const o = fighters[1 - i], r = f.r, D = f.def, dwt = D ? D.w : 0, typ = D ? D.type : "";
     f.root.getWorldPosition(v1); o.root.getWorldPosition(v2);
-    const face = Math.atan2(v2.x - v1.x, v2.z - v1.z);
+    const face = Math.atan2(v2.x - v1.x, v2.z - v1.z) + f.turn;
     faceQ.setFromAxisAngle(UP, face);
     FW.set(Math.sin(face), 0, Math.cos(face)); RAX.crossVectors(UP, FW);   // +angle about RAX leans towards the opponent
     const upperLean = f.lead && f.lead.s.kind === "upper" ? 0.12 * Math.max(0, f.b) : 0;
     const slipSg = typ === "slip" ? (D.e.arm === "L" ? 1 : -1) : 0;
     rotW(f.rig.spine, RAX, sm(f, "lean", 0.04 + 0.17 * Math.max(0, f.b) - 0.06 * Math.max(0, -f.b) - upperLean
       + (typ === "duck" ? 0.2 * dwt : 0) - (typ === "pull" ? 0.32 * dwt : 0) + (typ === "block" ? 0.06 * dwt : 0) + (f.kick ? KBODY[f.kick.e.kind].lean * f.kick.hw : 0)
-      + 0.25 * (o.clinch || 0) + (typ === "kblock" ? 0.08 * dwt : 0), dt) + 0.35 * r.bend);
+      + 0.25 * (o.clinch || 0) + (typ === "kblock" ? 0.08 * dwt : 0) + 1.2 * f.wd - 0.05 * f.restW, dt) + 0.35 * r.bend);
     rotW(f.rig.spine, FW, sm(f, "slip", slipSg * 0.3 * dwt + (f.kick ? (f.kick.side === "R" ? -1 : 1) * KBODY[f.kick.e.kind].side * f.kick.hw : 0)
-      + (typ === "kblock" && D.e.kind !== "knee" ? (D.e.arm === "R" ? -0.12 : 0.12) * dwt : 0), dt));
-    rotW(f.rig.upper, UP, sm(f, "twist", 0.6 * f.twist - 0.5 * f.kyaw, dt) + 0.35 * r.yaw + 0.04 * Math.sin(t * 0.9 + f.phase));
+      + (typ === "kblock" && D.e.kind !== "knee" ? (D.e.arm === "R" ? -0.12 : 0.12) * dwt : 0) - 2.0 * f.wl, dt));
+    rotW(f.rig.upper, UP, sm(f, "twist", 0.6 * f.twist - 0.5 * f.kyaw + f.tw, dt) + 0.35 * r.yaw + 0.04 * Math.sin(t * 0.9 + f.phase));
     const breath = Math.sin(t * Math.PI * 2 * (0.32 + 0.45 * f.fat) + f.phase);
     rotW(f.rig.chest, RAX, -breath * (0.018 + 0.03 * f.fat));
     rotW(f.rig.neck, RAX, 0.06 + 0.45 * r.pitch);            // chin tucked
     rotW(f.rig.head, RAX, 0.04 + 0.55 * r.pitch + 0.025 * Math.sin(t * 0.7 + f.phase));
     rotW(f.rig.head, UP, 0.65 * r.yaw + 0.05 * Math.sin(t * 0.55 + f.phase * 2));
-    rotW(f.rig.head, FW, sm(f, "slipH", slipSg * 0.15 * dwt, dt));
+    rotW(f.rig.head, FW, sm(f, "slipH", slipSg * 0.15 * dwt - f.wl, dt));
+    if (f.kdS >= 0) {
+      // knockdown torso: sway back, fold, fall back, lie there, sit up, over the hands, up
+      const s = f.kdS;
+      rotW(f.rig.spine, RAX, kf(KDK.lean, s));
+      rotW(f.rig.spine, FW, kf(KDK.roll, s));
+      rotW(f.rig.neck, RAX, kf(KDK.neck, s) + 0.05 * Math.sin(t * 1.3));
+      rotW(f.rig.head, FW, 0.12 * Math.sin(t * 0.9) * kf(KDK.arm, s));   // dazed, head rolling
+    }
     if (f.hurt > 0.01) {
       // upper body leads the stagger; head hangs and rolls
       const h = f.hurt;
@@ -1766,7 +2026,9 @@ function updateFighters(dt, t) {
     ["L", "R"].forEach((side) => {
       const A = f.arms[side];
       const K = f.kick, ok = o.kick, kSide = D && isKick(D.e.kind) ? (D.e.arm === "R" ? "L" : "R") : null;
-      if (A) { aimPoint(f, o, side, A, hitPt); armPose(f, side, f.guard[side], { kind: A.kind }, A.w, faceQ, hitPt); }
+      const kdA = f.kdS >= 0 ? kf(KDK.arm, f.kdS) : 0;
+      if (kdA > 0.01) { kdArmTarget(f, side, hitPt); armPose(f, side, f.guard[side], { kind: "body" }, kdA, faceQ, hitPt); }
+      else if (A) { aimPoint(f, o, side, A, hitPt); armPose(f, side, f.guard[side], { kind: A.kind }, A.w, faceQ, hitPt); }
       else if (f.clinch > 0.01) {
         // plum clinch: both hands behind the opponent's head, pulling it down onto the knee
         hitPt.copy(o.headN).addScaledVector(FW, 0.06).addScaledVector(RAX, side === "L" ? 0.07 : -0.07); hitPt.y -= 0.1;
@@ -1789,6 +2051,12 @@ function updateFighters(dt, t) {
         // swat the incoming hand across, in front of your own face
         hitPt.copy(f.headN).addScaledVector(FW, 0.3).addScaledVector(RAX, side === "R" ? 0.12 : -0.12); hitPt.y -= 0.06;
         armPose(f, side, f.guard[side], { kind: "straight" }, dwt * 0.9, faceQ, hitPt);
+      }
+      else if (f.restW > 0.01) {
+        // between rounds: hands down by the hips, shoulders loose
+        f.rig[side][0].getWorldPosition(hitPt);
+        hitPt.addScaledVector(RAX, side === "L" ? 0.12 : -0.12).addScaledVector(FW, 0.07); hitPt.y -= 0.5;
+        armPose(f, side, f.guard[side], { kind: "body" }, f.restW, faceQ, hitPt);
       }
       else { const bw = sm(f, "blk" + side, typ === "block" ? dwt : 0, dt); armPose(f, side, f.guard[side], bw > 0.001 ? BLOCK[side] : null, bw, faceQ, hitPt); }
     });
@@ -1849,8 +2117,48 @@ function runSim() {
   const top = all.slice(0, 14).map((e) => e.t + " " + e.name + " " + e.d.toFixed(3) + " " + e.k);
   const el = document.createElement("pre");
   el.style.cssText = "position:fixed;z-index:9;left:8px;top:70px;background:#000;color:#0f0;font-size:18px;margin:0;padding:6px";
-  el.textContent = rows.join("\n") + "\n" + "worst per channel (m/frame @60fps):\n" + Object.entries(worst).map(([k, v]) => k + " " + v.d + " @" + v.t).join("\n") + "\n--- top jumps ---\n" + top.join("\n");
+  el.id = "simOut";
+  el.textContent = "t " + fightT.toFixed(1) + " stats " + JSON.stringify(debug.stats) + "\n" + rows.join("\n") + "\n" + "worst per channel (m/frame @60fps):\n" + Object.entries(worst).map(([k, v]) => k + " " + v.d + " @" + v.t).join("\n") + "\n--- top jumps ---\n" + top.join("\n");
   document.body.appendChild(el);
+}
+
+// ---------- Fight HUD ----------
+const hud = { rd: document.getElementById("hudRd"), clock: document.getElementById("hudClock"), msg: document.getElementById("hudMsg"),
+  pips: [...document.querySelectorAll("#hudPips b")], key: "", msgKey: "", board: "" };
+const mmss = (s) => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+function updateHUD(T) {
+  const ph = phaseAt(T);
+  let rd = ph.r, secs = 0, msg = "", tone = "", into = T - ph.t0;
+  if (ph.type === "fight") {
+    secs = Math.max(0, Math.ceil(ph.t1 - T - 1e-6));
+    if (into < 2.5) { msg = ph.r === 1 && ph.n > 0 ? "Rematch · Round 1" : "Round " + ph.r + " · Fight"; tone = "gold"; }
+  } else if (ph.type === "kd") {
+    msg = into < 4.8 ? "Knockdown · Blue corner" : "Blue is back up";
+  } else if (ph.type === "break") {
+    if (into < BRK - 2.4) { msg = "Round " + ph.r + " complete"; tone = "steel"; }
+    else { rd = ph.r + 1; secs = RLEN; msg = "Round " + rd; tone = "gold"; }
+  } else {
+    if (into < ENDLEN - 2.4) { msg = "End of fight · 3 rounds"; tone = "steel"; }
+    else { rd = 1; secs = RLEN; msg = "Rematch · Round 1"; tone = "gold"; }
+  }
+  const key = rd + "|" + secs;
+  if (key !== hud.key) {
+    hud.key = key;
+    hud.rd.textContent = "Round " + rd + " / 3";
+    hud.clock.textContent = mmss(secs);
+    hud.clock.classList.toggle("low", ph.type === "fight" && secs <= 10);
+    const done = ph.type === "end" && rd === 3 ? 3 : rd - 1;
+    hud.pips.forEach((p, k) => { p.className = k < done ? "done" : k === rd - 1 && done < 3 ? "cur" : ""; });
+  }
+  const mk = msg + "|" + tone;
+  if (mk !== hud.msgKey) {
+    hud.msgKey = mk;
+    if (msg) { hud.msg.textContent = msg; hud.msg.className = "hud-msg show" + (tone ? " " + tone : ""); }
+    else hud.msg.className = hud.msg.className.replace(" show", "");
+  }
+  // the arena screens show the same clock
+  const bk = rd + "|" + secs + "|" + (loaded && fighters[1].hurt > 0.5);
+  if (bk !== hud.board) { hud.board = bk; drawScore(rd, secs, loaded && fighters[1].hurt > 0.5); }
 }
 
 const zoomCam = location.search.includes("zoom");
@@ -1859,9 +2167,12 @@ function tick() {
   if (document.hidden) { clock.getDelta(); return; }
   const dt = Math.min(clock.getDelta(), 1 / 20), t = clock.elapsedTime;
   // Hit-stop: on a clean shot the fight freezes for a few frames, which is what sells the weight.
+  // The time a hit-stop holds is paid back a few percent faster afterwards, so the round clock keeps real time.
   let fdt = dt;
-  if (hitstop > 0) { hitstop -= dt; fdt = 0; }
-  fightT = frozenT !== null ? frozenT : (reduce ? 0 : fightT + fdt);
+  if (hitstop > 0) { hitstop -= dt; fdt = 0; debt += dt; }
+  else if (debt > 0) { const x = Math.min(debt, dt * 0.08); debt -= x; fdt += x; }
+  fightT = frozenT !== null ? frozenT : (reduce ? startAt : fightT + fdt);
+  updateHUD(fightT);
 
   // Ring spring with slight overshoot.
   const target = arena.target * D2R;
@@ -1903,7 +2214,8 @@ function tick() {
       G.ev.filter((e) => e.kind !== "feint").slice(0, 160).map((e) => (e.t + IMPACT / e.sp).toFixed(2) + " " + e.who + " " + e.arm + " " + e.kind + " " + e.out).join("\n");
   }
   if (zoomCam && loaded) {   // test hook: ?zoom frames the two fighters close up
-    fighters[0].root.getWorldPosition(v1); fighters[1].root.getWorldPosition(v2); v3.subVectors(v2, v1).setY(0).normalize(); v1.add(v2).multiplyScalar(0.5); v1.y = 0.95; if (location.search.includes("side")) camera.position.set(v1.x + v3.z * 7, 1.6, v1.z - v3.x * 7);
+    fighters[0].root.getWorldPosition(v1); fighters[1].root.getWorldPosition(v2); v3.subVectors(v2, v1).setY(0).normalize(); v1.add(v2).multiplyScalar(0.5); v1.y = 0.95;
+    if (location.search.includes("focus")) { fighters[1].rig.hips.getWorldPosition(v1); v1.y = Math.max(0.5, v1.y); }   // ?zoom&focus frames the blue corner if (location.search.includes("side")) camera.position.set(v1.x + v3.z * 7, 1.6, v1.z - v3.x * 7);
     camera.clearViewOffset(); camera.fov = +(new URLSearchParams(location.search).get("zoom") || 17); camera.lookAt(v1); camera.updateProjectionMatrix();
   }
   updateVenue(dt, t);
